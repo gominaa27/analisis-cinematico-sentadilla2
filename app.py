@@ -1,10 +1,9 @@
 import tempfile
 import cv2
-import mediapipe as np_mp  # Usamos un alias seguro para la importación
+import mediapipe as mp
 import numpy as np
 import streamlit as st
 
-# Configuración inicial de la página
 st.set_page_config(
     page_title="Análisis Kinemático de Sentadilla", page_icon="🏋️‍♂️", layout="centered"
 )
@@ -17,13 +16,11 @@ st.write(
 
 st.subheader("Selecciona el video de la sentadilla")
 
-# Componente para subir el archivo de video
 video_file = st.file_uploader(
     "Sube tu video aquí", type=["mp4", "mov", "avi", "webm"]
 )
 
 if video_file is not None:
-  # Guardar el video subido en un archivo temporal para que OpenCV pueda leerlo
   tfile = tempfile.NamedTemporaryFile(delete=False)
   tfile.write(video_file.read())
 
@@ -33,8 +30,7 @@ if video_file is not None:
     with st.spinner("Procesando fotogramas con MediaPipe..."):
       cap = cv2.VideoCapture(tfile.name)
 
-      # Inicialización compatible con versiones recientes de mediapipe
-      mp_pose = np_mp.solutions.pose
+      mp_pose = mp.solutions.pose
       pose = mp_pose.Pose(
           static_image_mode=False,
           model_complexity=1,
@@ -44,29 +40,21 @@ if video_file is not None:
       )
 
       angulos_rodilla = []
-      tiempos = []
-
       fps = cap.get(cv2.CAP_PROP_FPS)
       if fps == 0 or fps is None:
-        fps = 30  # Valor por defecto si no se detectan los fps
+        fps = 30
 
-      frame_count = 0
       while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
           break
 
-        frame_count += 1
-        current_time = frame_count / fps
-
-        # Convertir la imagen a RGB para MediaPipe
         image_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = pose.process(image_rgb)
 
         if results.pose_landmarks:
           landmarks = results.pose_landmarks.landmark
 
-          # Tomamos el lado derecho: Cadera (24), Rodilla (26), Tobillo (28)
           hip = np.array(
               [
                   landmarks[mp_pose.PoseLandmark.RIGHT_HIP.value].x,
@@ -86,7 +74,6 @@ if video_file is not None:
               ]
           )
 
-          # Cálculo del ángulo usando vectores
           vector_a = hip - knee
           vector_b = ankle - knee
 
@@ -97,28 +84,20 @@ if video_file is not None:
           angle_deg = np.degrees(angle)
 
           angulos_rodilla.append(angle_deg)
-          tiempos.append(current_time)
 
       cap.release()
 
     if angulos_rodilla:
-      angulo_minimo = min(
-          angulos_rodilla
-      )  # El menor ángulo representa la máxima flexión de rodilla
+      angulo_minimo = min(angulos_rodilla)
       st.success("¡Análisis completado con éxito!")
-
-      # Mostrar métrica principal
       st.metric(
           label="Ángulo Máximo de Flexión de Rodilla (Mínimo registrado)",
           value=f"{angulo_minimo:.1f}°",
       )
-
-      # Gráfico de la variación del ángulo
       st.subheader("Gráfico: Variación del ángulo de rodilla en el tiempo")
       st.line_chart(data=angulos_rodilla)
     else:
       st.warning(
           "No se pudieron detectar los puntos corporales en el video. Asegúrate"
-          " de que la extremidad inferior analizada sea visible y que exista"
-          " buena iluminación."
+          " de que la extremidad inferior analizada sea visible."
       )
