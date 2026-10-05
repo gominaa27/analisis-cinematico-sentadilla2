@@ -1,5 +1,6 @@
-import tempfile
 import os
+import subprocess
+import tempfile
 
 import cv2
 import mediapipe as mp
@@ -39,7 +40,11 @@ video_file = st.file_uploader(
 if video_file is not None:
 
     # Crear archivo temporal para que OpenCV pueda leer el video
-    tfile = tempfile.NamedTemporaryFile(delete=False)
+    tfile = tempfile.NamedTemporaryFile(
+        delete=False,
+        suffix=".mp4",
+    )
+
     tfile.write(video_file.read())
     tfile.close()
 
@@ -52,7 +57,9 @@ if video_file is not None:
 
     if st.button("Analizar gesto", type="primary"):
 
-        with st.spinner("Procesando fotogramas con MediaPipe..."):
+        with st.spinner(
+            "Procesando video y calculando variables cinemáticas..."
+        ):
 
             # ---------------------------------------------
             # ABRIR VIDEO
@@ -71,38 +78,52 @@ if video_file is not None:
                 min_tracking_confidence=0.5,
             )
 
-            # Lista donde se almacenarán los ángulos
+            # Lista para almacenar los ángulos
             angulos_rodilla = []
 
-            # Obtener FPS
+            # ---------------------------------------------
+            # INFORMACIÓN DEL VIDEO
+            # ---------------------------------------------
+
             fps = cap.get(cv2.CAP_PROP_FPS)
 
             if fps == 0 or fps is None:
                 fps = 30
 
-            # Obtener dimensiones del video
-            ancho = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            alto = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            ancho = int(
+                cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+            )
 
-            # Obtener número total de fotogramas
-            total_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+            alto = int(
+                cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+            )
 
-            # Duración aproximada
-            duracion = total_frames / fps if fps > 0 else 0
+            total_frames = cap.get(
+                cv2.CAP_PROP_FRAME_COUNT
+            )
+
+            duracion = (
+                total_frames / fps
+                if fps > 0
+                else 0
+            )
 
             # ---------------------------------------------
-            # CREAR VIDEO PROCESADO
+            # ARCHIVO TEMPORAL PARA VIDEO PROCESADO
             # ---------------------------------------------
 
             output_file = tempfile.NamedTemporaryFile(
                 delete=False,
-                suffix=".mp4"
+                suffix=".mp4",
             )
 
             output_path = output_file.name
             output_file.close()
 
-            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            # Códec temporal para OpenCV
+            fourcc = cv2.VideoWriter_fourcc(
+                *"mp4v"
+            )
 
             out = cv2.VideoWriter(
                 output_path,
@@ -122,14 +143,22 @@ if video_file is not None:
                 if not ret:
                     break
 
-                # Convertir de BGR a RGB
+                # -----------------------------------------
+                # CONVERSIÓN BGR → RGB
+                # -----------------------------------------
+
                 image_rgb = cv2.cvtColor(
                     frame,
-                    cv2.COLOR_BGR2RGB
+                    cv2.COLOR_BGR2RGB,
                 )
 
-                # Estimar pose
-                results = pose.process(image_rgb)
+                # -----------------------------------------
+                # ESTIMACIÓN DE POSE
+                # -----------------------------------------
+
+                results = pose.process(
+                    image_rgb
+                )
 
                 # -----------------------------------------
                 # SI SE DETECTA LA POSE
@@ -137,10 +166,12 @@ if video_file is not None:
 
                 if results.pose_landmarks:
 
-                    landmarks = results.pose_landmarks.landmark
+                    landmarks = (
+                        results.pose_landmarks.landmark
+                    )
 
                     # -------------------------------------
-                    # OBTENER LANDMARKS DERECHOS
+                    # LANDMARKS DERECHOS
                     # -------------------------------------
 
                     hip_landmark = landmarks[
@@ -156,38 +187,63 @@ if video_file is not None:
                     ]
 
                     # -------------------------------------
-                    # CONVERTIR COORDENADAS NORMALIZADAS
-                    # A PIXELES
+                    # COORDENADAS EN PIXELES
                     # -------------------------------------
 
                     hip_pixel = np.array(
                         [
-                            int(hip_landmark.x * ancho),
-                            int(hip_landmark.y * alto),
+                            int(
+                                hip_landmark.x
+                                * ancho
+                            ),
+                            int(
+                                hip_landmark.y
+                                * alto
+                            ),
                         ]
                     )
 
                     knee_pixel = np.array(
                         [
-                            int(knee_landmark.x * ancho),
-                            int(knee_landmark.y * alto),
+                            int(
+                                knee_landmark.x
+                                * ancho
+                            ),
+                            int(
+                                knee_landmark.y
+                                * alto
+                            ),
                         ]
                     )
 
                     ankle_pixel = np.array(
                         [
-                            int(ankle_landmark.x * ancho),
-                            int(ankle_landmark.y * alto),
+                            int(
+                                ankle_landmark.x
+                                * ancho
+                            ),
+                            int(
+                                ankle_landmark.y
+                                * alto
+                            ),
                         ]
                     )
 
                     # -------------------------------------
-                    # CALCULAR ÁNGULO DE RODILLA
+                    # VECTORES DESDE LA RODILLA
                     # -------------------------------------
 
-                    # Vectores desde la rodilla
-                    vector_a = hip_pixel - knee_pixel
-                    vector_b = ankle_pixel - knee_pixel
+                    vector_a = (
+                        hip_pixel - knee_pixel
+                    )
+
+                    vector_b = (
+                        ankle_pixel - knee_pixel
+                    )
+
+                    # -------------------------------------
+                    # CÁLCULO DEL ÁNGULO
+                    # -------------------------------------
 
                     denominador = (
                         np.linalg.norm(vector_a)
@@ -196,10 +252,13 @@ if video_file is not None:
 
                     if denominador > 1e-6:
 
-                        cosine_angle = np.dot(
-                            vector_a,
-                            vector_b,
-                        ) / denominador
+                        cosine_angle = (
+                            np.dot(
+                                vector_a,
+                                vector_b,
+                            )
+                            / denominador
+                        )
 
                         # Evitar errores numéricos
                         cosine_angle = np.clip(
@@ -209,13 +268,19 @@ if video_file is not None:
                         )
 
                         # Ángulo en radianes
-                        angle = np.arccos(cosine_angle)
+                        angle_rad = np.arccos(
+                            cosine_angle
+                        )
 
                         # Convertir a grados
-                        angle_deg = np.degrees(angle)
+                        angle_deg = np.degrees(
+                            angle_rad
+                        )
 
-                        # Guardar ángulo para los resultados
-                        angulos_rodilla.append(angle_deg)
+                        # Guardar ángulo
+                        angulos_rodilla.append(
+                            angle_deg
+                        )
 
                         # ---------------------------------
                         # DIBUJAR PUNTOS
@@ -269,10 +334,17 @@ if video_file is not None:
                         # DIBUJAR ÁNGULO
                         # ---------------------------------
 
-                        texto_angulo = f"{angle_deg:.1f} deg"
+                        texto_angulo = (
+                            f"{angle_deg:.1f} deg"
+                        )
 
-                        texto_x = knee_pixel[0] + 15
-                        texto_y = knee_pixel[1] - 20
+                        texto_x = (
+                            knee_pixel[0] + 15
+                        )
+
+                        texto_y = (
+                            knee_pixel[1] - 20
+                        )
 
                         cv2.putText(
                             frame,
@@ -340,10 +412,44 @@ if video_file is not None:
 
                 out.write(frame)
 
-            # Liberar recursos
+            # ---------------------------------------------
+            # LIBERAR RECURSOS
+            # ---------------------------------------------
+
             cap.release()
             out.release()
             pose.close()
+
+            # ---------------------------------------------
+            # CONVERTIR A H.264 PARA REPRODUCCIÓN WEB
+            # ---------------------------------------------
+
+            video_web = tempfile.NamedTemporaryFile(
+                delete=False,
+                suffix="_web.mp4",
+            )
+
+            video_web_path = video_web.name
+            video_web.close()
+
+            resultado_ffmpeg = subprocess.run(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-i",
+                    output_path,
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-movflags",
+                    "+faststart",
+                    video_web_path,
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
 
         # -------------------------------------------------
         # RESULTADOS
@@ -355,24 +461,33 @@ if video_file is not None:
             # VARIABLES CINEMÁTICAS
             # ---------------------------------------------
 
-            # Menor ángulo = mayor flexión de rodilla
-            angulo_minimo = min(angulos_rodilla)
-
-            # Mayor ángulo registrado
-            angulo_maximo = max(angulos_rodilla)
-
-            # Rango de movimiento (ROM)
-            rom_rodilla = angulo_maximo - angulo_minimo
-
-            # Índice del fotograma donde ocurre
-            # la máxima flexión
-            indice_maxima_flexion = angulos_rodilla.index(
-                angulo_minimo
+            # Menor ángulo = mayor flexión
+            angulo_minimo = min(
+                angulos_rodilla
             )
 
-            # Tiempo hasta la máxima flexión
+            # Mayor ángulo registrado
+            angulo_maximo = max(
+                angulos_rodilla
+            )
+
+            # Rango de movimiento
+            rom_rodilla = (
+                angulo_maximo
+                - angulo_minimo
+            )
+
+            # Índice de máxima flexión
+            indice_maxima_flexion = (
+                angulos_rodilla.index(
+                    angulo_minimo
+                )
+            )
+
+            # Tiempo hasta máxima flexión
             tiempo_maxima_flexion = (
-                indice_maxima_flexion / fps
+                indice_maxima_flexion
+                / fps
             )
 
             # ---------------------------------------------
@@ -392,19 +507,33 @@ if video_file is not None:
             )
 
             st.write(
-                "Se muestran la cadera, rodilla y tobillo "
-                "derechos, junto con los vectores utilizados "
-                "para calcular el ángulo de la rodilla."
+                "El video muestra la cadera, rodilla y "
+                "tobillo derechos, junto con los vectores "
+                "utilizados para calcular el ángulo de la rodilla."
             )
 
-            # Mostrar video procesado
-            with open(
-                output_path,
-                "rb"
-            ) as video_processed:
+            # Verificar conversión
+            if (
+                resultado_ffmpeg.returncode == 0
+                and os.path.exists(
+                    video_web_path
+                )
+            ):
 
-                st.video(
-                    video_processed.read()
+                with open(
+                    video_web_path,
+                    "rb",
+                ) as video_processed:
+
+                    st.video(
+                        video_processed.read()
+                    )
+
+            else:
+
+                st.warning(
+                    "No fue posible generar el video "
+                    "procesado para reproducción web."
                 )
 
             # ---------------------------------------------
@@ -439,10 +568,12 @@ if video_file is not None:
 
                 st.metric(
                     label="Tiempo hasta máxima flexión",
-                    value=f"{tiempo_maxima_flexion:.2f} s",
+                    value=(
+                        f"{tiempo_maxima_flexion:.2f} s"
+                    ),
                 )
 
-            # Duración del video
+            # Duración
             st.metric(
                 label="Duración del video",
                 value=f"{duracion:.2f} s",
@@ -456,16 +587,18 @@ if video_file is not None:
                 "Variación del ángulo de rodilla durante la ejecución"
             )
 
-            # Crear eje temporal
             tiempos = (
-                np.arange(len(angulos_rodilla))
+                np.arange(
+                    len(angulos_rodilla)
+                )
                 / fps
             )
 
-            # Crear estructura para el gráfico
             datos_grafico = {
                 "Tiempo (s)": tiempos,
-                "Ángulo de rodilla (°)": angulos_rodilla,
+                "Ángulo de rodilla (°)": (
+                    angulos_rodilla
+                ),
             }
 
             st.line_chart(
@@ -475,51 +608,55 @@ if video_file is not None:
             )
 
             # ---------------------------------------------
-            # TABLA RESUMIDA POR SEGUNDOS ENTEROS
+            # TABLA POR SEGUNDOS ENTEROS
             # ---------------------------------------------
 
             st.subheader(
                 "Datos del análisis por segundo"
             )
 
-            # Crear segundos enteros desde 0 hasta
-            # el último segundo disponible
             segundos = np.arange(
                 0,
-                int(np.floor(duracion)) + 1,
+                int(
+                    np.floor(duracion)
+                ) + 1,
                 1,
             )
 
-            # Guardar el ángulo correspondiente
-            # a cada segundo
             angulos_por_segundo = []
 
             for segundo in segundos:
 
-                # Buscar el fotograma más cercano
-                # a ese segundo
                 indice = int(
-                    round(segundo * fps)
+                    round(
+                        segundo * fps
+                    )
                 )
 
-                # Evitar superar los datos disponibles
-                if indice >= len(angulos_rodilla):
+                if indice >= len(
+                    angulos_rodilla
+                ):
 
                     indice = (
-                        len(angulos_rodilla) - 1
+                        len(
+                            angulos_rodilla
+                        )
+                        - 1
                     )
 
                 angulos_por_segundo.append(
                     angulos_rodilla[indice]
                 )
 
-            # Crear tabla
             datos_tabla = {
 
                 "Tiempo (s)": segundos,
 
                 "Ángulo de rodilla (°)": [
-                    round(angulo, 1)
+                    round(
+                        angulo,
+                        1,
+                    )
                     for angulo in angulos_por_segundo
                 ],
             }
@@ -551,9 +688,12 @@ if video_file is not None:
                 "la ejecución."
             )
 
-        # ---------------------------------------------
-        # ELIMINAR ARCHIVO TEMPORAL DEL VIDEO PROCESADO
-        # ---------------------------------------------
+        # -------------------------------------------------
+        # ELIMINAR ARCHIVOS TEMPORALES
+        # -------------------------------------------------
 
         if os.path.exists(output_path):
             os.remove(output_path)
+
+        if os.path.exists(video_web_path):
+            os.remove(video_web_path)
