@@ -1,4 +1,5 @@
 import tempfile
+import os
 
 import cv2
 import mediapipe as mp
@@ -42,7 +43,7 @@ if video_file is not None:
     tfile.write(video_file.read())
     tfile.close()
 
-    # Mostrar video cargado
+    # Mostrar video original
     st.video(video_file)
 
     # -----------------------------------------------------
@@ -53,7 +54,10 @@ if video_file is not None:
 
         with st.spinner("Procesando fotogramas con MediaPipe..."):
 
-            # Abrir video
+            # ---------------------------------------------
+            # ABRIR VIDEO
+            # ---------------------------------------------
+
             cap = cv2.VideoCapture(tfile.name)
 
             # Inicializar MediaPipe Pose
@@ -70,21 +74,46 @@ if video_file is not None:
             # Lista donde se almacenarán los ángulos
             angulos_rodilla = []
 
-            # Obtener FPS del video
+            # Obtener FPS
             fps = cap.get(cv2.CAP_PROP_FPS)
 
             if fps == 0 or fps is None:
                 fps = 30
 
+            # Obtener dimensiones del video
+            ancho = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            alto = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
             # Obtener número total de fotogramas
             total_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
 
-            # Duración aproximada del video
+            # Duración aproximada
             duracion = total_frames / fps if fps > 0 else 0
 
-            # -------------------------------------------------
+            # ---------------------------------------------
+            # CREAR VIDEO PROCESADO
+            # ---------------------------------------------
+
+            output_file = tempfile.NamedTemporaryFile(
+                delete=False,
+                suffix=".mp4"
+            )
+
+            output_path = output_file.name
+            output_file.close()
+
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+
+            out = cv2.VideoWriter(
+                output_path,
+                fourcc,
+                fps,
+                (ancho, alto),
+            )
+
+            # ---------------------------------------------
             # PROCESAMIENTO FOTOGRAMA A FOTOGRAMA
-            # -------------------------------------------------
+            # ---------------------------------------------
 
             while cap.isOpened():
 
@@ -94,62 +123,72 @@ if video_file is not None:
                     break
 
                 # Convertir de BGR a RGB
-                image_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                image_rgb = cv2.cvtColor(
+                    frame,
+                    cv2.COLOR_BGR2RGB
+                )
 
                 # Estimar pose
                 results = pose.process(image_rgb)
 
-                # Si se detectan landmarks
+                # -----------------------------------------
+                # SI SE DETECTA LA POSE
+                # -----------------------------------------
+
                 if results.pose_landmarks:
 
                     landmarks = results.pose_landmarks.landmark
 
-                    # -----------------------------------------
-                    # OBTENER CADERA, RODILLA Y TOBILLO DERECHOS
-                    # -----------------------------------------
+                    # -------------------------------------
+                    # OBTENER LANDMARKS DERECHOS
+                    # -------------------------------------
 
-                    hip = np.array(
+                    hip_landmark = landmarks[
+                        mp_pose.PoseLandmark.RIGHT_HIP.value
+                    ]
+
+                    knee_landmark = landmarks[
+                        mp_pose.PoseLandmark.RIGHT_KNEE.value
+                    ]
+
+                    ankle_landmark = landmarks[
+                        mp_pose.PoseLandmark.RIGHT_ANKLE.value
+                    ]
+
+                    # -------------------------------------
+                    # CONVERTIR COORDENADAS NORMALIZADAS
+                    # A PIXELES
+                    # -------------------------------------
+
+                    hip_pixel = np.array(
                         [
-                            landmarks[
-                                mp_pose.PoseLandmark.RIGHT_HIP.value
-                            ].x,
-                            landmarks[
-                                mp_pose.PoseLandmark.RIGHT_HIP.value
-                            ].y,
+                            int(hip_landmark.x * ancho),
+                            int(hip_landmark.y * alto),
                         ]
                     )
 
-                    knee = np.array(
+                    knee_pixel = np.array(
                         [
-                            landmarks[
-                                mp_pose.PoseLandmark.RIGHT_KNEE.value
-                            ].x,
-                            landmarks[
-                                mp_pose.PoseLandmark.RIGHT_KNEE.value
-                            ].y,
+                            int(knee_landmark.x * ancho),
+                            int(knee_landmark.y * alto),
                         ]
                     )
 
-                    ankle = np.array(
+                    ankle_pixel = np.array(
                         [
-                            landmarks[
-                                mp_pose.PoseLandmark.RIGHT_ANKLE.value
-                            ].x,
-                            landmarks[
-                                mp_pose.PoseLandmark.RIGHT_ANKLE.value
-                            ].y,
+                            int(ankle_landmark.x * ancho),
+                            int(ankle_landmark.y * alto),
                         ]
                     )
 
-                    # -----------------------------------------
-                    # CÁLCULO DEL ÁNGULO DE RODILLA
-                    # -----------------------------------------
+                    # -------------------------------------
+                    # CALCULAR ÁNGULO DE RODILLA
+                    # -------------------------------------
 
                     # Vectores desde la rodilla
-                    vector_a = hip - knee
-                    vector_b = ankle - knee
+                    vector_a = hip_pixel - knee_pixel
+                    vector_b = ankle_pixel - knee_pixel
 
-                    # Producto punto y magnitudes
                     denominador = (
                         np.linalg.norm(vector_a)
                         * np.linalg.norm(vector_b)
@@ -175,15 +214,140 @@ if video_file is not None:
                         # Convertir a grados
                         angle_deg = np.degrees(angle)
 
+                        # Guardar ángulo para los resultados
                         angulos_rodilla.append(angle_deg)
+
+                        # ---------------------------------
+                        # DIBUJAR PUNTOS
+                        # ---------------------------------
+
+                        cv2.circle(
+                            frame,
+                            tuple(hip_pixel),
+                            8,
+                            (0, 255, 0),
+                            -1,
+                        )
+
+                        cv2.circle(
+                            frame,
+                            tuple(knee_pixel),
+                            10,
+                            (0, 0, 255),
+                            -1,
+                        )
+
+                        cv2.circle(
+                            frame,
+                            tuple(ankle_pixel),
+                            8,
+                            (255, 0, 0),
+                            -1,
+                        )
+
+                        # ---------------------------------
+                        # DIBUJAR VECTORES
+                        # ---------------------------------
+
+                        cv2.line(
+                            frame,
+                            tuple(hip_pixel),
+                            tuple(knee_pixel),
+                            (0, 255, 255),
+                            4,
+                        )
+
+                        cv2.line(
+                            frame,
+                            tuple(knee_pixel),
+                            tuple(ankle_pixel),
+                            (0, 255, 255),
+                            4,
+                        )
+
+                        # ---------------------------------
+                        # DIBUJAR ÁNGULO
+                        # ---------------------------------
+
+                        texto_angulo = f"{angle_deg:.1f} deg"
+
+                        texto_x = knee_pixel[0] + 15
+                        texto_y = knee_pixel[1] - 20
+
+                        cv2.putText(
+                            frame,
+                            texto_angulo,
+                            (
+                                texto_x,
+                                texto_y,
+                            ),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.8,
+                            (0, 255, 255),
+                            2,
+                            cv2.LINE_AA,
+                        )
+
+                        # ---------------------------------
+                        # ETIQUETAS
+                        # ---------------------------------
+
+                        cv2.putText(
+                            frame,
+                            "Cadera",
+                            (
+                                hip_pixel[0] + 10,
+                                hip_pixel[1],
+                            ),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.55,
+                            (0, 255, 0),
+                            2,
+                            cv2.LINE_AA,
+                        )
+
+                        cv2.putText(
+                            frame,
+                            "Rodilla",
+                            (
+                                knee_pixel[0] + 10,
+                                knee_pixel[1] + 25,
+                            ),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.55,
+                            (0, 0, 255),
+                            2,
+                            cv2.LINE_AA,
+                        )
+
+                        cv2.putText(
+                            frame,
+                            "Tobillo",
+                            (
+                                ankle_pixel[0] + 10,
+                                ankle_pixel[1],
+                            ),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.55,
+                            (255, 0, 0),
+                            2,
+                            cv2.LINE_AA,
+                        )
+
+                # -----------------------------------------
+                # GUARDAR FOTOGRAMA PROCESADO
+                # -----------------------------------------
+
+                out.write(frame)
 
             # Liberar recursos
             cap.release()
+            out.release()
             pose.close()
 
-        # -----------------------------------------------------
+        # -------------------------------------------------
         # RESULTADOS
-        # -----------------------------------------------------
+        # -------------------------------------------------
 
         if angulos_rodilla:
 
@@ -200,17 +364,56 @@ if video_file is not None:
             # Rango de movimiento (ROM)
             rom_rodilla = angulo_maximo - angulo_minimo
 
-            # Índice del fotograma donde ocurre la máxima flexión
+            # Índice del fotograma donde ocurre
+            # la máxima flexión
             indice_maxima_flexion = angulos_rodilla.index(
                 angulo_minimo
             )
 
             # Tiempo hasta la máxima flexión
-            tiempo_maxima_flexion = indice_maxima_flexion / fps
+            tiempo_maxima_flexion = (
+                indice_maxima_flexion / fps
+            )
 
-            st.success("¡Análisis completado con éxito!")
+            # ---------------------------------------------
+            # MENSAJE DE ÉXITO
+            # ---------------------------------------------
 
-            st.subheader("Resultados del análisis")
+            st.success(
+                "¡Análisis completado con éxito!"
+            )
+
+            # ---------------------------------------------
+            # VIDEO PROCESADO
+            # ---------------------------------------------
+
+            st.subheader(
+                "Visualización del análisis"
+            )
+
+            st.write(
+                "Se muestran la cadera, rodilla y tobillo "
+                "derechos, junto con los vectores utilizados "
+                "para calcular el ángulo de la rodilla."
+            )
+
+            # Mostrar video procesado
+            with open(
+                output_path,
+                "rb"
+            ) as video_processed:
+
+                st.video(
+                    video_processed.read()
+                )
+
+            # ---------------------------------------------
+            # RESULTADOS DEL ANÁLISIS
+            # ---------------------------------------------
+
+            st.subheader(
+                "Resultados del análisis"
+            )
 
             # ---------------------------------------------
             # MÉTRICAS PRINCIPALES
@@ -219,18 +422,21 @@ if video_file is not None:
             col1, col2, col3 = st.columns(3)
 
             with col1:
+
                 st.metric(
                     label="Máxima flexión de rodilla",
                     value=f"{angulo_minimo:.1f}°",
                 )
 
             with col2:
+
                 st.metric(
                     label="ROM de rodilla",
                     value=f"{rom_rodilla:.1f}°",
                 )
 
             with col3:
+
                 st.metric(
                     label="Tiempo hasta máxima flexión",
                     value=f"{tiempo_maxima_flexion:.2f} s",
@@ -251,7 +457,10 @@ if video_file is not None:
             )
 
             # Crear eje temporal
-            tiempos = np.arange(len(angulos_rodilla)) / fps
+            tiempos = (
+                np.arange(len(angulos_rodilla))
+                / fps
+            )
 
             # Crear estructura para el gráfico
             datos_grafico = {
@@ -269,27 +478,36 @@ if video_file is not None:
             # TABLA RESUMIDA POR SEGUNDOS ENTEROS
             # ---------------------------------------------
 
-            st.subheader("Datos del análisis por segundo")
+            st.subheader(
+                "Datos del análisis por segundo"
+            )
 
-            # Crear segundos enteros desde 0 hasta el último
-            # segundo disponible del video
+            # Crear segundos enteros desde 0 hasta
+            # el último segundo disponible
             segundos = np.arange(
                 0,
                 int(np.floor(duracion)) + 1,
                 1,
             )
 
-            # Guardar el ángulo correspondiente a cada segundo
+            # Guardar el ángulo correspondiente
+            # a cada segundo
             angulos_por_segundo = []
 
             for segundo in segundos:
 
-                # Buscar el fotograma más cercano a ese segundo
-                indice = int(round(segundo * fps))
+                # Buscar el fotograma más cercano
+                # a ese segundo
+                indice = int(
+                    round(segundo * fps)
+                )
 
-                # Evitar superar la cantidad de datos disponibles
+                # Evitar superar los datos disponibles
                 if indice >= len(angulos_rodilla):
-                    indice = len(angulos_rodilla) - 1
+
+                    indice = (
+                        len(angulos_rodilla) - 1
+                    )
 
                 angulos_por_segundo.append(
                     angulos_rodilla[indice]
@@ -297,7 +515,9 @@ if video_file is not None:
 
             # Crear tabla
             datos_tabla = {
+
                 "Tiempo (s)": segundos,
+
                 "Ángulo de rodilla (°)": [
                     round(angulo, 1)
                     for angulo in angulos_por_segundo
@@ -315,16 +535,25 @@ if video_file is not None:
             # ---------------------------------------------
 
             st.info(
-                "La máxima flexión de rodilla corresponde al menor ángulo "
-                "registrado. El ROM representa la diferencia entre el mayor "
-                "y el menor ángulo de rodilla durante el análisis."
+                "La máxima flexión de rodilla corresponde "
+                "al menor ángulo registrado. El ROM representa "
+                "la diferencia entre el mayor y el menor ángulo "
+                "de rodilla durante el análisis."
             )
 
         else:
 
             st.warning(
-                "No se pudieron detectar los puntos corporales en el video. "
-                "Asegúrate de que el sujeto sea visible de cuerpo completo "
-                "y que la extremidad inferior analizada permanezca visible "
-                "durante la ejecución."
+                "No se pudieron detectar los puntos corporales "
+                "en el video. Asegúrate de que el sujeto sea "
+                "visible de cuerpo completo y que la extremidad "
+                "inferior analizada permanezca visible durante "
+                "la ejecución."
             )
+
+        # ---------------------------------------------
+        # ELIMINAR ARCHIVO TEMPORAL DEL VIDEO PROCESADO
+        # ---------------------------------------------
+
+        if os.path.exists(output_path):
+            os.remove(output_path)
