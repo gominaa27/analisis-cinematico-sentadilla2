@@ -19,8 +19,8 @@ st.set_page_config(
 st.title("Análisis cinemático de sentadilla")
 
 st.write(
-    "Esta aplicación permite analizar el ángulo de la rodilla durante "
-    "la ejecución de una sentadilla mediante estimación de pose."
+    "Esta aplicación permite analizar variables cinemáticas de la rodilla "
+    "durante la ejecución de una sentadilla mediante estimación de pose."
 )
 
 st.subheader("Selecciona el video de la sentadilla")
@@ -149,7 +149,7 @@ if video_file is not None:
                     vector_a = hip - knee
                     vector_b = ankle - knee
 
-                    # Producto punto
+                    # Producto punto y magnitudes
                     denominador = (
                         np.linalg.norm(vector_a)
                         * np.linalg.norm(vector_b)
@@ -169,8 +169,10 @@ if video_file is not None:
                             1.0,
                         )
 
-                        # Convertir de radianes a grados
+                        # Ángulo en radianes
                         angle = np.arccos(cosine_angle)
+
+                        # Convertir a grados
                         angle_deg = np.degrees(angle)
 
                         angulos_rodilla.append(angle_deg)
@@ -185,31 +187,64 @@ if video_file is not None:
 
         if angulos_rodilla:
 
+            # ---------------------------------------------
+            # VARIABLES CINEMÁTICAS
+            # ---------------------------------------------
+
             # Menor ángulo = mayor flexión de rodilla
-            angulo_maxima_flexion = min(angulos_rodilla)
+            angulo_minimo = min(angulos_rodilla)
+
+            # Mayor ángulo registrado
+            angulo_maximo = max(angulos_rodilla)
+
+            # Rango de movimiento (ROM)
+            rom_rodilla = angulo_maximo - angulo_minimo
+
+            # Índice del fotograma donde ocurre la máxima flexión
+            indice_maxima_flexion = angulos_rodilla.index(
+                angulo_minimo
+            )
+
+            # Tiempo hasta la máxima flexión
+            tiempo_maxima_flexion = indice_maxima_flexion / fps
 
             st.success("¡Análisis completado con éxito!")
 
             st.subheader("Resultados del análisis")
 
-            # Mostrar resultados principales
-            col1, col2 = st.columns(2)
+            # ---------------------------------------------
+            # MÉTRICAS PRINCIPALES
+            # ---------------------------------------------
+
+            col1, col2, col3 = st.columns(3)
 
             with col1:
                 st.metric(
                     label="Máxima flexión de rodilla",
-                    value=f"{angulo_maxima_flexion:.1f}°",
+                    value=f"{angulo_minimo:.1f}°",
                 )
 
             with col2:
                 st.metric(
-                    label="Duración del video",
-                    value=f"{duracion:.2f} s",
+                    label="ROM de rodilla",
+                    value=f"{rom_rodilla:.1f}°",
                 )
 
-            # -------------------------------------------------
+            with col3:
+                st.metric(
+                    label="Tiempo hasta máxima flexión",
+                    value=f"{tiempo_maxima_flexion:.2f} s",
+                )
+
+            # Duración del video
+            st.metric(
+                label="Duración del video",
+                value=f"{duracion:.2f} s",
+            )
+
+            # ---------------------------------------------
             # GRÁFICO
-            # -------------------------------------------------
+            # ---------------------------------------------
 
             st.subheader(
                 "Variación del ángulo de rodilla durante la ejecución"
@@ -218,7 +253,7 @@ if video_file is not None:
             # Crear eje temporal
             tiempos = np.arange(len(angulos_rodilla)) / fps
 
-            # Crear estructura para Streamlit
+            # Crear estructura para el gráfico
             datos_grafico = {
                 "Tiempo (s)": tiempos,
                 "Ángulo de rodilla (°)": angulos_rodilla,
@@ -230,14 +265,14 @@ if video_file is not None:
                 y="Ángulo de rodilla (°)",
             )
 
-            # -------------------------------------------------
+            # ---------------------------------------------
             # INTERPRETACIÓN
-            # -------------------------------------------------
+            # ---------------------------------------------
 
             st.info(
-                "El valor de máxima flexión corresponde al menor ángulo "
-                "de rodilla registrado durante la ejecución de la "
-                "sentadilla."
+                "La máxima flexión de rodilla corresponde al menor ángulo "
+                "registrado. El ROM representa la diferencia entre el mayor "
+                "y el menor ángulo de rodilla durante el análisis."
             )
 
         else:
@@ -248,3 +283,4 @@ if video_file is not None:
                 "y que la extremidad inferior analizada permanezca visible "
                 "durante la ejecución."
             )
+ 
