@@ -1,5 +1,5 @@
 streamlit
-opencv-python
-mediapipe==0.10.14
+opencv-python-headless
 numpy
 protobuf<4
+mediapipe==0.10.14
