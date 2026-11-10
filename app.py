@@ -45,11 +45,14 @@ if video_file is not None:
         suffix=".mp4",
     )
 
-    tfile.write(video_file.read())
-    tfile.close()
+    video_bytes = video_file.getvalue()
 
-    # Mostrar video original
-    st.video(video_file)
+tfile.write(video_bytes)
+tfile.close()
+
+# Mostrar video original
+st.subheader("Video original")
+st.video(video_bytes, format="video/mp4")
 
     # -----------------------------------------------------
     # BOTÓN DE ANÁLISIS
