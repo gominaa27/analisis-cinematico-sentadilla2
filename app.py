@@ -34,7 +34,7 @@ def convertir_h264(entrada, salida):
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
         return False, str(exc)
     valido = resultado.returncode == 0 and os.path.exists(salida) and os.path.getsize(salida) > 0
-    return valido, resultado.stderr[-2500:] if not valido else ""
+    return valido, resultado.stderr[-1500:] if not valido else ""
 
 
 archivo = st.file_uploader("Selecciona el video de la sentadilla", type=["mp4", "mov", "avi", "webm"])
@@ -53,19 +53,17 @@ if archivo is not None:
         with open(ruta_original, "wb") as f:
             f.write(datos)
 
-        st.subheader("Prueba de imagen del video")
-
+        st.subheader("Fotograma de comprobación")
         captura = cv2.VideoCapture(ruta_original)
         correcto, fotograma = captura.read()
         captura.release()
+        if correcto:
+            st.image(cv2.cvtColor(fotograma, cv2.COLOR_BGR2RGB), caption="Imagen extraída del video", channels="RGB")
+        else:
+            st.warning("OpenCV no pudo extraer una imagen del video.")
 
-if correcto:
-    fotograma_rgb = cv2.cvtColor(fotograma, cv2.COLOR_BGR2RGB)
-    st.image(fotograma_rgb, caption="Fotograma de la sentadilla")
-else:
-    st.error("No se pudo extraer una imagen del video.")
         st.subheader("Video original")
-        with st.spinner("Preparando video para el navegador..."):
+        with st.spinner("Preparando video compatible..."):
             original_ok, original_error = convertir_h264(ruta_original, ruta_web_original)
         if original_ok:
             with open(ruta_web_original, "rb") as f:
@@ -74,26 +72,14 @@ else:
             st.download_button("Descargar video original compatible", original_web_bytes,
                                file_name="sentadilla_original_h264.mp4", mime="video/mp4")
         else:
-            st.error("No se pudo convertir el video original para el navegador.")
+            st.warning("No se pudo preparar la vista previa del video original.")
             st.code(original_error or "Error desconocido")
 
-        captura = cv2.VideoCapture(ruta_original)
-        if captura.isOpened():
-            correcto, imagen = captura.read()
-            if correcto:
-                st.caption("Fotograma de comprobación (extraído directamente con OpenCV)")
-                st.image(cv2.cvtColor(imagen, cv2.COLOR_BGR2RGB), channels="RGB")
-            else:
-                st.warning("OpenCV no pudo extraer un fotograma de comprobación.")
-        else:
-            st.warning("OpenCV no pudo abrir el archivo original.")
-        captura.release()
-
         if st.button("Analizar gesto", type="primary"):
-            with st.spinner("Analizando la sentadilla y generando video..."):
+            with st.spinner("Analizando la sentadilla..."):
                 cap = cv2.VideoCapture(ruta_original)
                 if not cap.isOpened():
-                    st.error("OpenCV no pudo abrir el video para analizarlo.")
+                    st.error("No se pudo abrir el video para analizarlo.")
                 else:
                     fps = cap.get(cv2.CAP_PROP_FPS)
                     if not np.isfinite(fps) or fps <= 0:
@@ -101,13 +87,14 @@ else:
                     ancho = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                     alto = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
                     if ancho <= 0 or alto <= 0:
-                        st.error("No se pudo obtener la resolución del video.")
+                        st.error("No se pudo leer la resolución del video.")
                         cap.release()
                     else:
-                        writer = cv2.VideoWriter(ruta_procesada,
-                                                 cv2.VideoWriter_fourcc(*"mp4v"), fps, (ancho, alto))
-                        if not writer.isOpened():
-                            st.error("No se pudo crear el archivo de video procesado.")
+                        escritor = cv2.VideoWriter(
+                            ruta_procesada, cv2.VideoWriter_fourcc(*"mp4v"), fps, (ancho, alto)
+                        )
+                        if not escritor.isOpened():
+                            st.error("No se pudo crear el video analizado.")
                             cap.release()
                         else:
                             mp_pose = mp.solutions.pose
@@ -143,35 +130,33 @@ else:
                                                 p1, p2, p3 = [tuple(np.rint(p).astype(int)) for p in puntos]
                                                 cv2.line(frame, p1, p2, (0, 255, 255), 4)
                                                 cv2.line(frame, p2, p3, (0, 255, 255), 4)
-                                                for p, color in zip((p1, p2, p3),
-                                                                    ((0, 255, 0), (0, 0, 255), (255, 0, 0))):
-                                                    cv2.circle(frame, p, 8, color, -1)
+                                                for p in (p1, p2, p3):
+                                                    cv2.circle(frame, p, 7, (0, 0, 255), -1)
                                                 x = max(5, min(p2[0] + 15, max(5, ancho - 150)))
                                                 y = max(30, min(p2[1] - 15, alto - 10))
                                                 cv2.putText(frame, f"{angulo:.1f} deg", (x, y),
                                                             cv2.FONT_HERSHEY_SIMPLEX, 0.75,
-                                                            (0, 0, 0), 4, cv2.LINE_AA)
-                                                cv2.putText(frame, f"{angulo:.1f} deg", (x, y),
-                                                            cv2.FONT_HERSHEY_SIMPLEX, 0.75,
                                                             (0, 255, 255), 2, cv2.LINE_AA)
-                                    writer.write(frame)
+                                    escritor.write(frame)
                             cap.release()
-                            writer.release()
+                            escritor.release()
+
                             if n == 0:
-                                st.error("No se pudieron leer fotogramas del video.")
+                                st.error("El video no contiene fotogramas legibles.")
                             else:
                                 procesado_ok, procesado_error = convertir_h264(
-                                    ruta_procesada, ruta_web_procesada)
+                                    ruta_procesada, ruta_web_procesada
+                                )
                                 if procesado_ok:
                                     with open(ruta_web_procesada, "rb") as f:
                                         procesado_bytes = f.read()
-                                    st.subheader("Video original")
-                                    st.video(archivo.getvalue(), format="video/mp4")
+                                    st.subheader("Video con análisis de movimiento")
+                                    st.video(procesado_bytes, format="video/mp4")
                                     st.download_button("Descargar video analizado", procesado_bytes,
                                                        file_name="sentadilla_analizada_h264.mp4",
                                                        mime="video/mp4")
                                 else:
-                                    st.error("Falló la conversión del video analizado a H.264.")
+                                    st.warning("No se pudo convertir el video analizado a H.264.")
                                     st.code(procesado_error or "Error desconocido")
 
                                 if angulos:
