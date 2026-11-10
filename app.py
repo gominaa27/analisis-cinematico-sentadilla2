@@ -154,8 +154,8 @@ if archivo is not None:
                                 if procesado_ok:
                                     with open(ruta_web_procesada, "rb") as f:
                                         procesado_bytes = f.read()
-                                    st.subheader("Video con análisis de movimiento")
-                                    st.video(procesado_bytes, format="video/mp4")
+                                    st.subheader("Video original")
+                                    st.video(archivo.getvalue(), format="video/mp4")
                                     st.download_button("Descargar video analizado", procesado_bytes,
                                                        file_name="sentadilla_analizada_h264.mp4",
                                                        mime="video/mp4")
