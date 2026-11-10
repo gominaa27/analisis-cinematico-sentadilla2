@@ -1,4 +1,5 @@
-import base64
+import os
+import subprocess
 import tempfile
 import cv2
 import mediapipe as mp
@@ -24,6 +25,7 @@ archivo = st.file_uploader("Selecciona el video de la sentadilla", type=["mp4", 
 if archivo is not None:
     lado = st.selectbox("Pierna que se analizará", ["Derecha", "Izquierda"])
     
+    # Guardar video original de forma segura
     tfile_orig = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
     tfile_orig.write(archivo.read())
     ruta_original = tfile_orig.name
@@ -37,7 +39,7 @@ if archivo is not None:
     st.download_button("Descargar video original", video_orig_bytes, "video_original.mp4", "video/mp4")
 
     if st.button("Analizar gesto", type="primary"):
-        with st.spinner("Procesando video y generando salida compatible... ⏳"):
+        with st.spinner("Procesando video y generando visualización... ⏳"):
             entrada = cv2.VideoCapture(ruta_original)
             if not entrada.isOpened():
                 st.error("OpenCV no pudo abrir el video.")
@@ -45,17 +47,17 @@ if archivo is not None:
                 fps = entrada.get(cv2.CAP_PROP_FPS)
                 if not np.isfinite(fps) or fps <= 0:
                     fps = 30.0
+                total_frames = int(entrada.get(cv2.CAP_PROP_FRAME_COUNT))
                 ancho = int(entrada.get(cv2.CAP_PROP_FRAME_WIDTH))
                 alto = int(entrada.get(cv2.CAP_PROP_FRAME_HEIGHT))
                 
-                # Archivo temporal para la salida procesada
-                tfile_proc = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
-                ruta_procesada = tfile_proc.name
-                tfile_proc.close()
+                # Archivo temporal crudo para OpenCV
+                tfile_raw = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
+                ruta_raw = tfile_raw.name
+                tfile_raw.close()
 
-                # Usar VideoWriter con fourcc estandarizado
                 escritor = cv2.VideoWriter(
-                    ruta_procesada, cv2.VideoWriter_fourcc(*'mp4v'), fps, (ancho, alto)
+                    ruta_raw, cv2.VideoWriter_fourcc(*'mp4v'), fps, (ancho, alto)
                 )
 
                 if not escritor.isOpened():
@@ -109,7 +111,7 @@ if archivo is not None:
                                         angulos.append(angulo_actual)
                                         tiempos.append(tiempo)
                                         
-                                        # Dibujar líneas amarillas y círculos
+                                        # Dibujar esqueleto y ángulos
                                         cv2.line(fotograma, tuple(cadera), tuple(rodilla), (0, 255, 255), 4)
                                         cv2.line(fotograma, tuple(rodilla), tuple(tobillo), (0, 255, 255), 4)
                                         for punto, color in zip(
@@ -135,22 +137,31 @@ if archivo is not None:
                     entrada.release()
                     escritor.release()
 
+                    # Convertir el video al estándar H.264 compatible con navegadores web usando FFmpeg
+                    tfile_proc = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
+                    ruta_procesada = tfile_proc.name
+                    tfile_proc.close()
+
+                    try:
+                        subprocess.run([
+                            'ffmpeg', '-y', '-i', ruta_raw,
+                            '-vcodec', 'libx264',
+                            '-pix_fmt', 'yuv420p',
+                            '-crf', '23',
+                            ruta_procesada
+                        ], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    except Exception:
+                        ruta_procesada = ruta_raw # Respaldo por si acaso
+
                     if numero_fotograma == 0:
                         st.error("El video no contiene fotogramas.")
                     else:
-                        st.subheader("Video con análisis de movimiento")
+                        st.subheader("Visualización del análisis")
+                        st.video(ruta_procesada)
                         
-                        # Truco definitivo de renderizado por HTML Base64 para saltarse el bloqueo de Streamlit Cloud
                         with open(ruta_procesada, "rb") as f_proc:
-                            video_bytes = f_proc.read()
-                        
-                        base64_video = base64.b64encode(video_bytes).decode("utf-8")
-                        st.markdown(
-                            f'<video width="100%" controls autoplay loop><source src="data:video/mp4;base64,{base64_video}" type="video/mp4"></video>',
-                            unsafe_allow_html=True,
-                        )
-                        
-                        st.download_button("Descargar video analizado", video_bytes, "sentadilla_analizada.mp4", "video/mp4")
+                            video_proc_bytes = f_proc.read()
+                        st.download_button("Descargar video analizado", video_proc_bytes, "sentadilla_analizada.mp4", "video/mp4")
                         
                         if angulos:
                             indice_min = int(np.argmin(angulos))
@@ -158,20 +169,20 @@ if archivo is not None:
                             rom = max(angulos) - minimo
                             
                             st.success("¡Análisis completado con éxito!")
-                            st.subheader("Resultados Cuantitativos")
+                            st.subheader("Resultados del análisis")
                             c1, c2, c3 = st.columns(3)
-                            c1.metric("Ángulo mínimo", f"{minimo:.1f}°")
-                            c2.metric("ROM observado", f"{rom:.1f}°")
-                            c3.metric("Mayor flexión", f"{tiempos[indice_min]:.2f} s")
+                            c1.metric("Máxima flexión de rodilla", f"{minimo:.1f}°")
+                            c2.metric("ROM de rodilla", f"{rom:.1f}°")
+                            c3.metric("Tiempo hasta máxima flexión", f"{tiempos[indice_min]:.2f} s")
                             
                             tabla = pd.DataFrame({
                                 "Tiempo (s)": tiempos,
                                 "Ángulo de rodilla (°)": angulos,
                             })
-                            st.subheader("Evolución del ángulo de rodilla")
+                            st.subheader("Variación del ángulo de rodilla durante la ejecución")
                             st.line_chart(tabla.set_index("Tiempo (s)"))
                             
-                            st.subheader("Datos detallados del análisis")
+                            st.subheader("Datos del análisis por segundo")
                             paso = max(1, len(tabla) // 20)
                             st.dataframe(
                                 tabla.iloc[::paso].round(2),
