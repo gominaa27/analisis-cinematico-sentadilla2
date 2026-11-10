@@ -1,4 +1,5 @@
 import os
+import subprocess
 import tempfile
 
 import cv2
@@ -27,41 +28,59 @@ archivo = st.file_uploader("Selecciona el video de la sentadilla", type=["mp4", 
 if archivo is not None:
     lado = st.selectbox("Pierna que se analizará", ["Derecha", "Izquierda"])
     
-    tfile = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
-    tfile.write(archivo.read())
-    ruta_original = tfile.name
-    tfile.close()
-
-    st.subheader("Video original")
-    st.video(ruta_original)
-    
-    with open(ruta_original, "rb") as f:
-        video_orig_bytes = f.read()
-    st.download_button("Descargar video original", video_orig_bytes, "video_original.mp4", "video/mp4")
-
-    if st.button("Analizar gesto", type="primary"):
-        texto_estado = st.empty()
+    # Crear un directorio temporal seguro para procesar los videos
+    with tempfile.TemporaryDirectory() as carpeta:
+        extension = os.path.splitext(archivo.name)[1].lower() or ".mp4"
+        ruta_original_cruda = os.path.join(carpeta, "crudo" + extension)
+        ruta_original = os.path.join(carpeta, "original_compatible.mp4")
         
-        entrada = cv2.VideoCapture(ruta_original)
-        if not entrada.isOpened():
-            st.error("OpenCV no pudo abrir el video. Prueba con un archivo MP4 estándar.")
-        else:
-            fps = entrada.get(cv2.CAP_PROP_FPS)
-            if not np.isfinite(fps) or fps <= 0:
-                fps = 30.0
-            total_frames = int(entrada.get(cv2.CAP_PROP_FRAME_COUNT))
-            ancho = int(entrada.get(cv2.CAP_PROP_FRAME_WIDTH))
-            alto = int(entrada.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            
-            if ancho <= 0 or alto <= 0:
-                st.error("No se pudieron leer las dimensiones del video.")
-                entrada.release()
-            else:
-                # Volvemos a .mp4 con mp4v
-                tfile_proc = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
-                ruta_procesada = tfile_proc.name
-                tfile_proc.close()
+        with open(ruta_original_cruda, "wb") as f:
+            f.write(archivo.read())
 
+        # Forzar conversión del video original a MP4 estándar usando OpenCV de forma segura
+        cap_conv = cv2.VideoCapture(ruta_original_cruda)
+        fps_c = cap_conv.get(cv2.CAP_PROP_FPS)
+        if not np.isfinite(fps_c) or fps_c <= 0:
+            fps_c = 30.0
+        w_c = int(cap_conv.get(cv2.CAP_PROP_FRAME_WIDTH))
+        h_c = int(cap_conv.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        
+        # Si OpenCV lee las dimensiones bien, lo reescribimos a MP4 estándar para la web
+        if w_c > 0 and h_c > 0:
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            out_c = cv2.VideoWriter(ruta_original, fourcc, fps_c, (w_c, h_c))
+            while cap_conv.isOpened():
+                ret_c, frame_c = cap_conv.read()
+                if not ret_c:
+                    break
+                out_c.write(frame_c)
+            cap_conv.release()
+            out_c.release()
+        else:
+            ruta_original = ruta_original_cruda # Respaldo si falla
+
+        st.subheader("Video original")
+        st.video(ruta_original)
+        
+        with open(ruta_original, "rb") as f:
+            video_orig_bytes = f.read()
+        st.download_button("Descargar video original", video_orig_bytes, "video_original.mp4", "video/mp4")
+
+        if st.button("Analizar gesto", type="primary"):
+            texto_estado = st.empty()
+            
+            entrada = cv2.VideoCapture(ruta_original)
+            if not entrada.isOpened():
+                st.error("OpenCV no pudo abrir el video.")
+            else:
+                fps = entrada.get(cv2.CAP_PROP_FPS)
+                if not np.isfinite(fps) or fps <= 0:
+                    fps = 30.0
+                total_frames = int(entrada.get(cv2.CAP_PROP_FRAME_COUNT))
+                ancho = int(entrada.get(cv2.CAP_PROP_FRAME_WIDTH))
+                alto = int(entrada.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                
+                ruta_procesada = os.path.join(carpeta, "procesado.mp4")
                 escritor = cv2.VideoWriter(
                     ruta_procesada, cv2.VideoWriter_fourcc(*"mp4v"), fps, (ancho, alto)
                 )
@@ -150,12 +169,13 @@ if archivo is not None:
                     else:
                         st.subheader("Video con análisis de movimiento")
                         
-                        # Usar st.video directamente con el MP4 generado
-                        st.video(ruta_procesada)
+                        # Leemos los bytes y los guardamos temporalmente fuera del context manager o usamos st.video directo si está en la misma sesión
+                        # Truco infalible: leemos el archivo procesado a memoria para pasarlo limpio a st.video
+                        with open(ruta_procesada, "rb") as f_p:
+                            bytes_proc = f_p.read()
                         
-                        with open(ruta_procesada, "rb") as f:
-                            video_proc_bytes = f.read()
-                        st.download_button("Descargar video analizado", video_proc_bytes, "sentadilla_analizada.mp4", "video/mp4")
+                        st.video(bytes_proc)
+                        st.download_button("Descargar video analizado", bytes_proc, "sentadilla_analizada.mp4", "video/mp4")
                         
                         if angulos:
                             indice = int(np.argmin(angulos))
