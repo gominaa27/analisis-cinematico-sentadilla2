@@ -51,13 +51,13 @@ if archivo is not None:
             ancho = int(entrada.get(cv2.CAP_PROP_FRAME_WIDTH))
             alto = int(entrada.get(cv2.CAP_PROP_FRAME_HEIGHT))
             
-            # Crear un archivo temporal permanente para el video procesado (delete=False)
-            tfile_proc = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
+            # Usar formato .webm con códec VP80 (100% compatible con navegadores web)
+            tfile_proc = tempfile.NamedTemporaryFile(delete=False, suffix='.webm')
             ruta_procesada = tfile_proc.name
             tfile_proc.close()
 
             escritor = cv2.VideoWriter(
-                ruta_procesada, cv2.VideoWriter_fourcc(*"mp4v"), fps, (ancho, alto)
+                ruta_procesada, cv2.VideoWriter_fourcc(*"VP80"), fps, (ancho, alto)
             )
 
             if not escritor.isOpened():
@@ -144,12 +144,11 @@ if archivo is not None:
                 else:
                     st.subheader("Video con análisis de movimiento")
                     
-                    # Leer los bytes del video procesado y mostrarlos con st.video
                     with open(ruta_procesada, "rb") as f_p:
                         bytes_proc = f_p.read()
                     
                     st.video(bytes_proc)
-                    st.download_button("Descargar video analizado", bytes_proc, "sentadilla_analizada.mp4", "video/mp4")
+                    st.download_button("Descargar video analizado", bytes_proc, "sentadilla_analizada.webm", "video/webm")
                     
                     if angulos:
                         indice = int(np.argmin(angulos))
