@@ -1,3 +1,4 @@
+import base64
 import os
 import tempfile
 
@@ -27,18 +28,23 @@ archivo = st.file_uploader("Selecciona el video de la sentadilla", type=["mp4", 
 if archivo is not None:
     lado = st.selectbox("Pierna que se analizará", ["Derecha", "Izquierda"])
     
-    # Crear un archivo temporal seguro fuera del context manager para evitar bloqueos
+    # Crear un archivo temporal seguro para el video original
     tfile = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
     tfile.write(archivo.read())
     ruta_original = tfile.name
     tfile.close()
 
     st.subheader("Video original")
-    # Reproducir el video directamente desde el archivo temporal subido
-    st.video(ruta_original)
     
+    # Reproducir video original usando HTML para asegurar compatibilidad en la nube
     with open(ruta_original, "rb") as f:
-        st.download_button("Descargar video original", f.read(), "video_original.mp4", "video/mp4")
+        video_orig_bytes = f.read()
+    st.markdown(
+        f'<video width="100%" controls><source src="data:video/mp4;base64,{base64.b64encode(video_orig_bytes).decode()}" type="video/mp4"></video>',
+        unsafe_allow_html=True,
+    )
+    
+    st.download_button("Descargar video original", video_orig_bytes, "video_original.mp4", "video/mp4")
 
     # Comprobación visual con OpenCV
     vista = cv2.VideoCapture(ruta_original)
@@ -69,11 +75,17 @@ if archivo is not None:
                     ruta_procesada = tfile_proc.name
                     tfile_proc.close()
 
-                    # Usar 'mp4v' o 'H264' como códec compatible
+                    # Usar H264 para que el navegador lo reproduzca bien
                     escritor = cv2.VideoWriter(
-                        ruta_procesada, cv2.VideoWriter_fourcc(*"mp4v"), fps, (ancho, alto)
+                        ruta_procesada, cv2.VideoWriter_fourcc(*"H264"), fps, (ancho, alto)
                     )
                     
+                    if not escritor.isOpened():
+                        # Respaldo por si H264 falla en el entorno local/nube
+                        escritor = cv2.VideoWriter(
+                            ruta_procesada, cv2.VideoWriter_fourcc(*"mp4v"), fps, (ancho, alto)
+                        )
+
                     if not escritor.isOpened():
                         st.error("No se pudo crear el archivo de video procesado.")
                         entrada.release()
@@ -128,68 +140,3 @@ if archivo is not None:
                                                 cv2.circle(fotograma, tuple(punto), 8, color, -1)
                                             x = max(5, min(int(rodilla[0]) + 15, ancho - 120))
                                             y = max(25, min(int(rodilla[1]) - 15, alto - 10))
-                                            cv2.putText(
-                                                fotograma, f"{angulo:.1f} deg", (x, y),
-                                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 3,
-                                                cv2.LINE_AA,
-                                            )
-                                            cv2.putText(
-                                                fotograma, f"{angulo:.1f} deg", (x, y),
-                                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2,
-                                                cv2.LINE_AA,
-                                            )
-                                escritor.write(fotograma)
-                                
-                        entrada.release()
-                        escritor.release()
-                        
-                        if numero_fotograma == 0:
-                            st.error("El video no contiene fotogramas que se puedan leer.")
-                        else:
-                            st.subheader("Video con análisis de movimiento")
-                            # Reproducir directamente el video procesado
-                            st.video(ruta_procesada)
-                            
-                            with open(ruta_procesada, "rb") as f:
-                                st.download_button("Descargar video analizado", f.read(), "sentadilla_analizada.mp4", "video/mp4")
-                            
-                            vista_proc = cv2.VideoCapture(ruta_procesada)
-                            exito_p, primer_frame_p = vista_proc.read()
-                            vista_proc.release()
-                            if exito_p:
-                                st.caption("Fotograma de comprobación del análisis")
-                                st.image(cv2.cvtColor(primer_frame_p, cv2.COLOR_BGR2RGB))
-                            
-                            if angulos:
-                                indice = int(np.argmin(angulos))
-                                minimo = angulos[indice]
-                                rom = max(angulos) - minimo
-                                st.success("¡Análisis completado!")
-                                st.subheader("Resultados")
-                                c1, c2, c3 = st.columns(3)
-                                c1.metric("Ángulo mínimo", f"{minimo:.1f}°")
-                                c2.metric("ROM observado", f"{rom:.1f}°")
-                                c3.metric("Mayor flexión", f"{tiempos[indice]:.2f} s")
-                                
-                                tabla = pd.DataFrame({
-                                    "Tiempo (s)": tiempos,
-                                    "Ángulo de rodilla (°)": angulos,
-                                })
-                                st.subheader("Ángulo de rodilla a lo largo del tiempo")
-                                st.line_chart(tabla.set_index("Tiempo (s)"))
-                                st.subheader("Datos del análisis")
-                                paso = max(1, len(tabla) // 20)
-                                st.dataframe(
-                                    tabla.iloc[::paso].round(2),
-                                    hide_index=True, use_container_width=True,
-                                )
-                                st.caption(
-                                    "El ángulo mínimo representa la mayor flexión observada. "
-                                    "El ROM es la diferencia entre los ángulos máximo y mínimo medidos. "
-                                    "Son estimaciones bidimensionales dependientes de la visibilidad y la cámara."
-                                )
-                            else:
-                                st.warning(
-                                    "No se detectaron suficientes puntos de cadera, rodilla y tobillo. "
-                                    "Graba de perfil, con el cuerpo completo visible, y prueba la otra pierna."
-                                )
