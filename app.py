@@ -44,8 +44,6 @@ if archivo is not None:
     st.download_button("Descargar video original", video_orig_bytes, "video_original.mp4", "video/mp4")
 
     if st.button("Analizar gesto", type="primary"):
-        # Contenedor dinámico para mostrar el progreso en tiempo real
-        barra_progreso = st.empty()
         texto_estado = st.empty()
         
         entrada = cv2.VideoCapture(ruta_original)
@@ -63,18 +61,14 @@ if archivo is not None:
                 st.error("No se pudieron leer las dimensiones del video.")
                 entrada.release()
             else:
-                tfile_proc = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
+                # Usar formato .avi con XVID para garantizar que dibuje y reproduzca sin errores
+                tfile_proc = tempfile.NamedTemporaryFile(delete=False, suffix='.avi')
                 ruta_procesada = tfile_proc.name
                 tfile_proc.close()
 
-                # Usar H264 o mp4v como respaldo
                 escritor = cv2.VideoWriter(
-                    ruta_procesada, cv2.VideoWriter_fourcc(*"H264"), fps, (ancho, alto)
+                    ruta_procesada, cv2.VideoWriter_fourcc(*"XVID"), fps, (ancho, alto)
                 )
-                if not escritor.isOpened():
-                    escritor = cv2.VideoWriter(
-                        ruta_procesada, cv2.VideoWriter_fourcc(*"mp4v"), fps, (ancho, alto)
-                    )
 
                 if not escritor.isOpened():
                     st.error("No se pudo crear el archivo de video procesado.")
@@ -94,7 +88,6 @@ if archivo is not None:
                     tiempos = []
                     numero_fotograma = 0
                     
-                    # Umbrales más flexibles (0.3) para asegurar que detecte los puntos fácilmente
                     with mp_pose.Pose(
                         static_image_mode=False,
                         model_complexity=1,
@@ -109,7 +102,6 @@ if archivo is not None:
                             tiempo = numero_fotograma / fps
                             numero_fotograma += 1
                             
-                            # Mostrar progreso en pantalla para que sepas que está avanzando
                             if total_frames > 0 and numero_fotograma % 10 == 0:
                                 texto_estado.text(f"Procesando fotograma {numero_fotograma} de {total_frames}...")
                             
@@ -120,7 +112,6 @@ if archivo is not None:
                                 puntos = resultado.pose_landmarks.landmark
                                 seleccion = [puntos[i] for i in indices]
                                 
-                                # Bajamos la exigencia de visibilidad individual a 0.3 para evitar que se salte frames
                                 if all(p.visibility >= 0.3 for p in seleccion):
                                     pixeles = [
                                         np.array([int(p.x * ancho), int(p.y * alto)])
@@ -133,7 +124,7 @@ if archivo is not None:
                                         angulos.append(angulo)
                                         tiempos.append(tiempo)
                                         
-                                        # Dibujar líneas y círculos del esqueleto analizado
+                                        # Dibuja las líneas amarillas y los puntos de color
                                         cv2.line(fotograma, tuple(cadera), tuple(rodilla), (0, 255, 255), 4)
                                         cv2.line(fotograma, tuple(rodilla), tuple(tobillo), (0, 255, 255), 4)
                                         for punto, color in zip(
@@ -153,26 +144,27 @@ if archivo is not None:
                                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2,
                                             cv2.LINE_AA,
                                         )
+                            # Escribe el fotograma modificado con los dibujos en el video de salida
                             escritor.write(fotograma)
                             
                     entrada.release()
                     escritor.release()
-                    texto_estado.empty() # Limpiar texto de carga
+                    texto_estado.empty()
                     
                     if numero_fotograma == 0:
                         st.error("El video no contiene fotogramas que se puedan leer.")
                     else:
                         st.subheader("Video con análisis de movimiento")
                         
-                        # Reproducir video procesado
+                        # Reproducir el video procesado en formato AVI con XVID (compatible por HTML)
                         with open(ruta_procesada, "rb") as f:
                             video_proc_bytes = f.read()
                         st.markdown(
-                            f'<video width="100%" controls autoplay loop><source src="data:video/mp4;base64,{base64.b64encode(video_proc_bytes).decode()}" type="video/mp4"></video>',
+                            f'<video width="100%" controls autoplay loop><source src="data:video/avi;base64,{base64.b64encode(video_proc_bytes).decode()}" type="video/avi"></video>',
                             unsafe_allow_html=True,
                         )
                         
-                        st.download_button("Descargar video analizado", video_proc_bytes, "sentadilla_analizada.mp4", "video/mp4")
+                        st.download_button("Descargar video analizado", video_proc_bytes, "sentadilla_analizada.avi", "video/avi")
                         
                         if angulos:
                             indice = int(np.argmin(angulos))
