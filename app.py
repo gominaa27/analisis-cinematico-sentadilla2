@@ -364,37 +364,36 @@ if archivo is not None:
                                                     (0, 255, 255), 4
                                                 )
 
-                                                for p in (p1, p2, p3):
-                                                    cv2.circle(
-                                                        frame, p, 7,
-                                                        (0, 0, 255), -1
+                                                # Puntos con colores diferentes (BGR)
+                                                etiquetas = [
+                                                    (p1, "Cadera", (0, 255, 0)),
+                                                    (p2, "Rodilla", (0, 0, 255)),
+                                                    (p3, "Tobillo", (255, 0, 0)),
+                                                ]
+
+                                                escala = max(0.55, min(ancho / 600, 1.0))
+                                                grosor = max(1, round(2 * escala))
+                                                for punto, nombre, color in etiquetas:
+                                                    cv2.circle(frame, punto, 8, color, -1)
+                                                    texto_x = min(punto[0] + 12, ancho - 100)
+                                                    texto_y = max(25, min(punto[1] + 22, alto - 10))
+                                                    cv2.putText(
+                                                        frame, nombre,
+                                                        (max(5, texto_x), texto_y),
+                                                        cv2.FONT_HERSHEY_SIMPLEX,
+                                                        escala, color, grosor,
+                                                        cv2.LINE_AA
                                                     )
 
-                                                x = max(
-                                                    5,
-                                                    min(
-                                                        p2[0] + 15,
-                                                        max(5, ancho - 150)
-                                                    )
-                                                )
-
-                                                y = max(
-                                                    30,
-                                                    min(
-                                                        p2[1] - 15,
-                                                        alto - 10
-                                                    )
-                                                )
-
+                                                # Angulo junto a la rodilla
+                                                texto_angulo = f"{angulo:.1f} deg"
+                                                x = max(5, min(p2[0] + 15, ancho - 160))
+                                                y = max(30, min(p2[1] - 20, alto - 10))
                                                 cv2.putText(
-                                                    frame,
-                                                    f"{angulo:.1f} deg",
-                                                    (x, y),
+                                                    frame, texto_angulo, (x, y),
                                                     cv2.FONT_HERSHEY_SIMPLEX,
-                                                    0.75,
-                                                    (0, 255, 255),
-                                                    2,
-                                                    cv2.LINE_AA
+                                                    max(0.7, escala),
+                                                    (0, 255, 255), 2, cv2.LINE_AA
                                                 )
 
                                     escritor.write(frame)
