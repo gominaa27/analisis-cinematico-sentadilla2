@@ -53,6 +53,17 @@ if archivo is not None:
         with open(ruta_original, "wb") as f:
             f.write(datos)
 
+        st.subheader("Prueba de imagen del video")
+
+        captura = cv2.VideoCapture(ruta_original)
+        correcto, fotograma = captura.read()
+        captura.release()
+
+if correcto:
+    fotograma_rgb = cv2.cvtColor(fotograma, cv2.COLOR_BGR2RGB)
+    st.image(fotograma_rgb, caption="Fotograma de la sentadilla")
+else:
+    st.error("No se pudo extraer una imagen del video.")
         st.subheader("Video original")
         with st.spinner("Preparando video para el navegador..."):
             original_ok, original_error = convertir_h264(ruta_original, ruta_web_original)
