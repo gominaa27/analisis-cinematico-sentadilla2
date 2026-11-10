@@ -1,4 +1,3 @@
-import base64
 import os
 import tempfile
 
@@ -28,19 +27,16 @@ archivo = st.file_uploader("Selecciona el video de la sentadilla", type=["mp4", 
 if archivo is not None:
     lado = st.selectbox("Pierna que se analizará", ["Derecha", "Izquierda"])
     
-    # Crear archivo temporal seguro para el video original
     tfile = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
     tfile.write(archivo.read())
     ruta_original = tfile.name
     tfile.close()
 
     st.subheader("Video original")
+    st.video(ruta_original)
+    
     with open(ruta_original, "rb") as f:
         video_orig_bytes = f.read()
-    st.markdown(
-        f'<video width="100%" controls><source src="data:video/mp4;base64,{base64.b64encode(video_orig_bytes).decode()}" type="video/mp4"></video>',
-        unsafe_allow_html=True,
-    )
     st.download_button("Descargar video original", video_orig_bytes, "video_original.mp4", "video/mp4")
 
     if st.button("Analizar gesto", type="primary"):
@@ -61,13 +57,13 @@ if archivo is not None:
                 st.error("No se pudieron leer las dimensiones del video.")
                 entrada.release()
             else:
-                # Usar formato .avi con XVID para garantizar que dibuje y reproduzca sin errores
-                tfile_proc = tempfile.NamedTemporaryFile(delete=False, suffix='.avi')
+                # Volvemos a .mp4 con mp4v
+                tfile_proc = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
                 ruta_procesada = tfile_proc.name
                 tfile_proc.close()
 
                 escritor = cv2.VideoWriter(
-                    ruta_procesada, cv2.VideoWriter_fourcc(*"XVID"), fps, (ancho, alto)
+                    ruta_procesada, cv2.VideoWriter_fourcc(*"mp4v"), fps, (ancho, alto)
                 )
 
                 if not escritor.isOpened():
@@ -124,7 +120,6 @@ if archivo is not None:
                                         angulos.append(angulo)
                                         tiempos.append(tiempo)
                                         
-                                        # Dibuja las líneas amarillas y los puntos de color
                                         cv2.line(fotograma, tuple(cadera), tuple(rodilla), (0, 255, 255), 4)
                                         cv2.line(fotograma, tuple(rodilla), tuple(tobillo), (0, 255, 255), 4)
                                         for punto, color in zip(
@@ -144,7 +139,6 @@ if archivo is not None:
                                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2,
                                             cv2.LINE_AA,
                                         )
-                            # Escribe el fotograma modificado con los dibujos en el video de salida
                             escritor.write(fotograma)
                             
                     entrada.release()
@@ -156,15 +150,12 @@ if archivo is not None:
                     else:
                         st.subheader("Video con análisis de movimiento")
                         
-                        # Reproducir el video procesado en formato AVI con XVID (compatible por HTML)
+                        # Usar st.video directamente con el MP4 generado
+                        st.video(ruta_procesada)
+                        
                         with open(ruta_procesada, "rb") as f:
                             video_proc_bytes = f.read()
-                        st.markdown(
-                            f'<video width="100%" controls autoplay loop><source src="data:video/avi;base64,{base64.b64encode(video_proc_bytes).decode()}" type="video/avi"></video>',
-                            unsafe_allow_html=True,
-                        )
-                        
-                        st.download_button("Descargar video analizado", video_proc_bytes, "sentadilla_analizada.avi", "video/avi")
+                        st.download_button("Descargar video analizado", video_proc_bytes, "sentadilla_analizada.mp4", "video/mp4")
                         
                         if angulos:
                             indice = int(np.argmin(angulos))
