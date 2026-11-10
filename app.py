@@ -1,3 +1,4 @@
+import base64
 import tempfile
 import cv2
 import mediapipe as mp
@@ -36,7 +37,7 @@ if archivo is not None:
     st.download_button("Descargar video original", video_orig_bytes, "video_original.mp4", "video/mp4")
 
     if st.button("Analizar gesto", type="primary"):
-        with st.spinner("Procesando el movimiento con MediaPipe... ⏳"):
+        with st.spinner("Procesando video y generando salida compatible... ⏳"):
             entrada = cv2.VideoCapture(ruta_original)
             if not entrada.isOpened():
                 st.error("OpenCV no pudo abrir el video.")
@@ -47,116 +48,134 @@ if archivo is not None:
                 ancho = int(entrada.get(cv2.CAP_PROP_FRAME_WIDTH))
                 alto = int(entrada.get(cv2.CAP_PROP_FRAME_HEIGHT))
                 
-                mp_pose = mp.solutions.pose
-                indices = (
-                    (mp_pose.PoseLandmark.RIGHT_HIP.value,
-                     mp_pose.PoseLandmark.RIGHT_KNEE.value,
-                     mp_pose.PoseLandmark.RIGHT_ANKLE.value)
-                    if lado == "Derecha" else
-                    (mp_pose.PoseLandmark.LEFT_HIP.value,
-                     mp_pose.PoseLandmark.LEFT_KNEE.value,
-                     mp_pose.PoseLandmark.LEFT_ANKLE.value)
+                # Archivo temporal para la salida procesada
+                tfile_proc = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
+                ruta_procesada = tfile_proc.name
+                tfile_proc.close()
+
+                # Usar VideoWriter con fourcc estandarizado
+                escritor = cv2.VideoWriter(
+                    ruta_procesada, cv2.VideoWriter_fourcc(*'mp4v'), fps, (ancho, alto)
                 )
-                angulos = []
-                tiempos = []
-                fotograma_critico = None
-                minimo_angulo = 999.0
-                numero_fotograma = 0
-                
-                with mp_pose.Pose(
-                    static_image_mode=False,
-                    model_complexity=1,
-                    min_detection_confidence=0.3,
-                    min_tracking_confidence=0.3,
-                ) as pose:
-                    while True:
-                        correcto, fotograma = entrada.read()
-                        if not correcto:
-                            break
-                        
-                        tiempo = numero_fotograma / fps
-                        numero_fotograma += 1
-                        
-                        rgb = cv2.cvtColor(fotograma, cv2.COLOR_BGR2RGB)
-                        resultado = pose.process(rgb)
-                        
-                        if resultado.pose_landmarks:
-                            puntos = resultado.pose_landmarks.landmark
-                            seleccion = [puntos[i] for i in indices]
+
+                if not escritor.isOpened():
+                    st.error("No se pudo crear el escritor de video.")
+                    entrada.release()
+                else:
+                    mp_pose = mp.solutions.pose
+                    indices = (
+                        (mp_pose.PoseLandmark.RIGHT_HIP.value,
+                         mp_pose.PoseLandmark.RIGHT_KNEE.value,
+                         mp_pose.PoseLandmark.RIGHT_ANKLE.value)
+                        if lado == "Derecha" else
+                        (mp_pose.PoseLandmark.LEFT_HIP.value,
+                         mp_pose.PoseLandmark.LEFT_KNEE.value,
+                         mp_pose.PoseLandmark.LEFT_ANKLE.value)
+                    )
+                    angulos = []
+                    tiempos = []
+                    numero_fotograma = 0
+                    
+                    with mp_pose.Pose(
+                        static_image_mode=False,
+                        model_complexity=1,
+                        min_detection_confidence=0.3,
+                        min_tracking_confidence=0.3,
+                    ) as pose:
+                        while True:
+                            correcto, fotograma = entrada.read()
+                            if not correcto:
+                                break
                             
-                            if all(p.visibility >= 0.3 for p in seleccion):
-                                pixeles = [
-                                    np.array([int(p.x * ancho), int(p.y * alto)])
-                                    for p in seleccion
-                                ]
-                                cadera, rodilla, tobillo = pixeles
-                                angulo_actual = calcular_angulo(cadera, rodilla, tobillo)
+                            tiempo = numero_fotograma / fps
+                            numero_fotograma += 1
+                            
+                            rgb = cv2.cvtColor(fotograma, cv2.COLOR_BGR2RGB)
+                            resultado = pose.process(rgb)
+                            
+                            if resultado.pose_landmarks:
+                                puntos = resultado.pose_landmarks.landmark
+                                seleccion = [puntos[i] for i in indices]
                                 
-                                if angulo_actual is not None:
-                                    angulos.append(angulo_actual)
-                                    tiempos.append(tiempo)
+                                if all(p.visibility >= 0.3 for p in seleccion):
+                                    pixeles = [
+                                        np.array([int(p.x * ancho), int(p.y * alto)])
+                                        for p in seleccion
+                                    ]
+                                    cadera, rodilla, tobillo = pixeles
+                                    angulo_actual = calcular_angulo(cadera, rodilla, tobillo)
                                     
-                                    # Dibujar líneas y círculos analíticos
-                                    cv2.line(fotograma, tuple(cadera), tuple(rodilla), (0, 255, 255), 4)
-                                    cv2.line(fotograma, tuple(rodilla), tuple(tobillo), (0, 255, 255), 4)
-                                    for punto, color in zip(
-                                        pixeles, [(0, 255, 0), (0, 0, 255), (255, 0, 0)]
-                                    ):
-                                        cv2.circle(fotograma, tuple(punto), 8, color, -1)
+                                    if angulo_actual is not None:
+                                        angulos.append(angulo_actual)
+                                        tiempos.append(tiempo)
                                         
-                                    x = max(5, min(int(rodilla[0]) + 15, ancho - 120))
-                                    y = max(25, min(int(rodilla[1]) - 15, alto - 10))
-                                    cv2.putText(
-                                        fotograma, f"{angulo_actual:.1f} deg", (x, y),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 3,
-                                        cv2.LINE_AA,
-                                    )
-                                    cv2.putText(
-                                        fotograma, f"{angulo_actual:.1f} deg", (x, y),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2,
-                                        cv2.LINE_AA,
-                                    )
-                                    
-                                    # Capturar el fotograma exacto de mayor flexión (ángulo mínimo)
-                                    if angulo_actual < minimo_angulo:
-                                        minimo_angulo = angulo_actual
-                                        fotograma_critico = cv2.cvtColor(fotograma, cv2.COLOR_BGR2RGB)
+                                        # Dibujar líneas amarillas y círculos
+                                        cv2.line(fotograma, tuple(cadera), tuple(rodilla), (0, 255, 255), 4)
+                                        cv2.line(fotograma, tuple(rodilla), tuple(tobillo), (0, 255, 255), 4)
+                                        for punto, color in zip(
+                                            pixeles, [(0, 255, 0), (0, 0, 255), (255, 0, 0)]
+                                        ):
+                                            cv2.circle(fotograma, tuple(punto), 8, color, -1)
+                                            
+                                        x = max(5, min(int(rodilla[0]) + 15, ancho - 120))
+                                        y = max(25, min(int(rodilla[1]) - 15, alto - 10))
+                                        cv2.putText(
+                                            fotograma, f"{angulo_actual:.1f} deg", (x, y),
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 3,
+                                            cv2.LINE_AA,
+                                        )
+                                        cv2.putText(
+                                            fotograma, f"{angulo_actual:.1f} deg", (x, y),
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2,
+                                            cv2.LINE_AA,
+                                        )
+                            
+                            escritor.write(fotograma)
                             
                     entrada.release()
+                    escritor.release()
 
-                if not angulos:
-                    st.warning("Se procesó el video pero no se pudieron calcular los ángulos. Asegúrate de grabar de perfil.")
-                else:
-                    indice_min = int(np.argmin(angulos))
-                    minimo = angulos[indice_min]
-                    rom = max(angulos) - minimo
-                    
-                    st.success("¡Análisis bioinstrumental completado con éxito!")
-                    
-                    # 1. Resultados métricos arriba
-                    st.subheader("Resultados Cuantitativos")
-                    c1, c2, c3 = st.columns(3)
-                    c1.metric("Ángulo mínimo", f"{minimo:.1f}°")
-                    c2.metric("ROM observado", f"{rom:.1f}°")
-                    c3.metric("Mayor flexión", f"{tiempos[indice_min]:.2f} s")
-                    
-                    # 2. Fotograma clave destacado de inmediato
-                    if fotograma_critico is not None:
-                        st.subheader("Fotograma clave: Máxima flexión de rodilla")
-                        st.image(fotograma_critico, caption=f"Punto crítico del gesto ({minimo:.1f}° de flexión)", use_container_width=True)
-
-                    # 3. Gráfica de evolución temporal
-                    tabla = pd.DataFrame({
-                        "Tiempo (s)": tiempos,
-                        "Ángulo de rodilla (°)": angulos,
-                    })
-                    st.subheader("Evolución del ángulo de rodilla")
-                    st.line_chart(tabla.set_index("Tiempo (s)"))
-                    
-                    # 4. Tabla de datos
-                    st.subheader("Datos detallados del análisis")
-                    paso = max(1, len(tabla) // 20)
-                    st.dataframe(
-                        tabla.iloc[::paso].round(2),
-                        hide_index=True, use_container_width=True,
-                    )
+                    if numero_fotograma == 0:
+                        st.error("El video no contiene fotogramas.")
+                    else:
+                        st.subheader("Video con análisis de movimiento")
+                        
+                        # Truco definitivo de renderizado por HTML Base64 para saltarse el bloqueo de Streamlit Cloud
+                        with open(ruta_procesada, "rb") as f_proc:
+                            video_bytes = f_proc.read()
+                        
+                        base64_video = base64.b64encode(video_bytes).decode("utf-8")
+                        st.markdown(
+                            f'<video width="100%" controls autoplay loop><source src="data:video/mp4;base64,{base64_video}" type="video/mp4"></video>',
+                            unsafe_allow_html=True,
+                        )
+                        
+                        st.download_button("Descargar video analizado", video_bytes, "sentadilla_analizada.mp4", "video/mp4")
+                        
+                        if angulos:
+                            indice_min = int(np.argmin(angulos))
+                            minimo = angulos[indice_min]
+                            rom = max(angulos) - minimo
+                            
+                            st.success("¡Análisis completado con éxito!")
+                            st.subheader("Resultados Cuantitativos")
+                            c1, c2, c3 = st.columns(3)
+                            c1.metric("Ángulo mínimo", f"{minimo:.1f}°")
+                            c2.metric("ROM observado", f"{rom:.1f}°")
+                            c3.metric("Mayor flexión", f"{tiempos[indice_min]:.2f} s")
+                            
+                            tabla = pd.DataFrame({
+                                "Tiempo (s)": tiempos,
+                                "Ángulo de rodilla (°)": angulos,
+                            })
+                            st.subheader("Evolución del ángulo de rodilla")
+                            st.line_chart(tabla.set_index("Tiempo (s)"))
+                            
+                            st.subheader("Datos detallados del análisis")
+                            paso = max(1, len(tabla) // 20)
+                            st.dataframe(
+                                tabla.iloc[::paso].round(2),
+                                hide_index=True, use_container_width=True,
+                            )
+                        else:
+                            st.warning("No se pudieron calcular los ángulos. Asegúrate de grabar de perfil.")
