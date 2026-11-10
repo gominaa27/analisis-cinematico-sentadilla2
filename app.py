@@ -18,6 +18,11 @@ def calcular_angulo(cadera, rodilla, tobillo):
     coseno = np.clip(np.dot(a, b) / denominador, -1.0, 1.0)
     return float(np.degrees(np.arccos(coseno)))
 
+def convertir_imagen_streamlit(img_cv2):
+    # Codifica el frame de OpenCV a JPG para que Streamlit lo muestre 100% seguro
+    _, buffer = cv2.imencode('.jpg', img_cv2)
+    return buffer.tobytes()
+
 archivo = st.file_uploader("Selecciona el video de la sentadilla", type=["mp4", "mov", "avi", "webm"])
 
 if archivo is not None:
@@ -59,8 +64,8 @@ if archivo is not None:
                 )
                 angulos = []
                 tiempos = []
-                fotograma_inicial = None
-                fotograma_critico = None
+                fotograma_inicial_bytes = None
+                fotograma_critico_bytes = None
                 minimo_angulo = 999.0
                 numero_fotograma = 0
                 
@@ -97,7 +102,7 @@ if archivo is not None:
                                     angulos.append(angulo_actual)
                                     tiempos.append(tiempo)
                                     
-                                    # Dibujar líneas amarillas y puntos en el fotograma
+                                    # Dibujar líneas amarillas y puntos
                                     cv2.line(fotograma, tuple(cadera), tuple(rodilla), (0, 255, 255), 4)
                                     cv2.line(fotograma, tuple(rodilla), tuple(tobillo), (0, 255, 255), 4)
                                     for punto, color in zip(
@@ -118,14 +123,14 @@ if archivo is not None:
                                         cv2.LINE_AA,
                                     )
                                     
-                                    # Guardar primer fotograma analizado
-                                    if fotograma_inicial is None:
-                                        fotograma_inicial = cv2.cvtColor(fotograma, cv2.COLOR_BGR2RGB)
+                                    # Guardar primer fotograma
+                                    if fotograma_inicial_bytes is None:
+                                        fotograma_inicial_bytes = convertir_imagen_streamlit(fotograma)
                                         
-                                    # Guardar fotograma de mayor flexión (ángulo mínimo)
+                                    # Guardar fotograma de mayor flexión
                                     if angulo_actual < minimo_angulo:
                                         minimo_angulo = angulo_actual
-                                        fotograma_critico = cv2.cvtColor(fotograma, cv2.COLOR_BGR2RGB)
+                                        fotograma_critico_bytes = convertir_imagen_streamlit(fotograma)
                             
                     entrada.release()
 
@@ -145,15 +150,15 @@ if archivo is not None:
                     c2.metric("ROM observado", f"{rom:.1f}°")
                     c3.metric("Mayor flexión", f"{tiempos[indice_min]:.2f} s")
                     
-                    # 2. Visualización infalible: Fotogramas clave analizados con las líneas dibujadas
+                    # 2. Visualización limpia de fotogramas clave
                     st.subheader("Fotogramas Clave Analizados del Gesto")
                     col_img1, col_img2 = st.columns(2)
                     with col_img1:
-                        if fotograma_inicial is not None:
-                            st.image(fotograma_inicial, caption="Inicio del movimiento", use_container_width=True)
+                        if fotograma_inicial_bytes is not None:
+                            st.image(fotograma_inicial_bytes, caption="Inicio del movimiento", use_container_width=True)
                     with col_img2:
-                        if fotograma_critico is not None:
-                            st.image(fotograma_critico, caption=f"Punto crítico / Máxima flexión ({minimo:.1f}°)", use_container_width=True)
+                        if fotograma_critico_bytes is not None:
+                            st.image(fotograma_critico_bytes, caption=f"Punto crítico / Máxima flexión ({minimo:.1f}°)", use_container_width=True)
 
                     # 3. Gráfica de evolución
                     tabla = pd.DataFrame({
