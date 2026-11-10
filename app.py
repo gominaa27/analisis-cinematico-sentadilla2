@@ -1,5 +1,7 @@
-import base64
+import os
+import subprocess
 import tempfile
+
 import cv2
 import mediapipe as mp
 import numpy as np
@@ -10,171 +12,175 @@ st.set_page_config(page_title="Análisis cinemático de sentadilla", page_icon="
 st.title("Análisis cinemático de sentadilla")
 st.write("Carga un video de perfil para analizar el ángulo de rodilla durante una sentadilla.")
 
+
 def calcular_angulo(cadera, rodilla, tobillo):
     a = cadera - rodilla
     b = tobillo - rodilla
-    denominador = np.linalg.norm(a) * np.linalg.norm(b)
-    if denominador < 1e-6:
+    norma = np.linalg.norm(a) * np.linalg.norm(b)
+    if norma < 1e-6:
         return None
-    coseno = np.clip(np.dot(a, b) / denominador, -1.0, 1.0)
-    return float(np.degrees(np.arccos(coseno)))
+    return float(np.degrees(np.arccos(np.clip(np.dot(a, b) / norma, -1, 1))))
+
+
+def convertir_h264(entrada, salida):
+    comando = [
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+        "-i", entrada, "-map", "0:v:0", "-an", "-c:v", "libx264",
+        "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart", salida,
+    ]
+    try:
+        resultado = subprocess.run(comando, capture_output=True, text=True, timeout=180)
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        return False, str(exc)
+    valido = resultado.returncode == 0 and os.path.exists(salida) and os.path.getsize(salida) > 0
+    return valido, resultado.stderr[-2500:] if not valido else ""
+
 
 archivo = st.file_uploader("Selecciona el video de la sentadilla", type=["mp4", "mov", "avi", "webm"])
 
 if archivo is not None:
     lado = st.selectbox("Pierna que se analizará", ["Derecha", "Izquierda"])
-    
-    tfile_orig = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
-    tfile_orig.write(archivo.read())
-    ruta_original = tfile_orig.name
-    tfile_orig.close()
+    datos = archivo.getvalue()
+    st.caption(f"Archivo recibido: {len(datos) / 1024 / 1024:.2f} MB")
 
-    st.subheader("Video original")
-    st.video(ruta_original)
-    
-    with open(ruta_original, "rb") as f:
-        video_orig_bytes = f.read()
-    st.download_button("Descargar video original", video_orig_bytes, "video_original.mp4", "video/mp4")
+    with tempfile.TemporaryDirectory() as carpeta:
+        extension = os.path.splitext(archivo.name)[1].lower() or ".mp4"
+        ruta_original = os.path.join(carpeta, "entrada" + extension)
+        ruta_web_original = os.path.join(carpeta, "original_web.mp4")
+        ruta_procesada = os.path.join(carpeta, "procesado_temporal.mp4")
+        ruta_web_procesada = os.path.join(carpeta, "analizado_web.mp4")
+        with open(ruta_original, "wb") as f:
+            f.write(datos)
 
-    if st.button("Analizar gesto", type="primary"):
-        with st.spinner("Procesando video y generando salida visual... ⏳"):
-            entrada = cv2.VideoCapture(ruta_original)
-            if not entrada.isOpened():
-                st.error("OpenCV no pudo abrir el video.")
+        st.subheader("Video original")
+        with st.spinner("Preparando video para el navegador..."):
+            original_ok, original_error = convertir_h264(ruta_original, ruta_web_original)
+        if original_ok:
+            with open(ruta_web_original, "rb") as f:
+                original_web_bytes = f.read()
+            st.video(original_web_bytes, format="video/mp4")
+            st.download_button("Descargar video original compatible", original_web_bytes,
+                               file_name="sentadilla_original_h264.mp4", mime="video/mp4")
+        else:
+            st.error("No se pudo convertir el video original para el navegador.")
+            st.code(original_error or "Error desconocido")
+
+        captura = cv2.VideoCapture(ruta_original)
+        if captura.isOpened():
+            correcto, imagen = captura.read()
+            if correcto:
+                st.caption("Fotograma de comprobación (extraído directamente con OpenCV)")
+                st.image(cv2.cvtColor(imagen, cv2.COLOR_BGR2RGB), channels="RGB")
             else:
-                fps = entrada.get(cv2.CAP_PROP_FPS)
-                if not np.isfinite(fps) or fps <= 0:
-                    fps = 30.0
-                ancho = int(entrada.get(cv2.CAP_PROP_FRAME_WIDTH))
-                alto = int(entrada.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                
-                # Archivo temporal para la salida procesada con códec estándar
-                tfile_proc = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
-                ruta_procesada = tfile_proc.name
-                tfile_proc.close()
+                st.warning("OpenCV no pudo extraer un fotograma de comprobación.")
+        else:
+            st.warning("OpenCV no pudo abrir el archivo original.")
+        captura.release()
 
-                escritor = cv2.VideoWriter(
-                    ruta_procesada, cv2.VideoWriter_fourcc(*'mp4v'), fps, (ancho, alto)
-                )
-
-                if not escritor.isOpened():
-                    st.error("No se pudo crear el escritor de video.")
-                    entrada.release()
+        if st.button("Analizar gesto", type="primary"):
+            with st.spinner("Analizando la sentadilla y generando video..."):
+                cap = cv2.VideoCapture(ruta_original)
+                if not cap.isOpened():
+                    st.error("OpenCV no pudo abrir el video para analizarlo.")
                 else:
-                    mp_pose = mp.solutions.pose
-                    indices = (
-                        (mp_pose.PoseLandmark.RIGHT_HIP.value,
-                         mp_pose.PoseLandmark.RIGHT_KNEE.value,
-                         mp_pose.PoseLandmark.RIGHT_ANKLE.value)
-                        if lado == "Derecha" else
-                        (mp_pose.PoseLandmark.LEFT_HIP.value,
-                         mp_pose.PoseLandmark.LEFT_KNEE.value,
-                         mp_pose.PoseLandmark.LEFT_ANKLE.value)
-                    )
-                    angulos = []
-                    tiempos = []
-                    numero_fotograma = 0
-                    
-                    with mp_pose.Pose(
-                        static_image_mode=False,
-                        model_complexity=1,
-                        min_detection_confidence=0.3,
-                        min_tracking_confidence=0.3,
-                    ) as pose:
-                        while True:
-                            correcto, fotograma = entrada.read()
-                            if not correcto:
-                                break
-                            
-                            tiempo = numero_fotograma / fps
-                            numero_fotograma += 1
-                            
-                            rgb = cv2.cvtColor(fotograma, cv2.COLOR_BGR2RGB)
-                            resultado = pose.process(rgb)
-                            
-                            if resultado.pose_landmarks:
-                                puntos = resultado.pose_landmarks.landmark
-                                seleccion = [puntos[i] for i in indices]
-                                
-                                if all(p.visibility >= 0.3 for p in seleccion):
-                                    pixeles = [
-                                        np.array([int(p.x * ancho), int(p.y * alto)])
-                                        for p in seleccion
-                                    ]
-                                    cadera, rodilla, tobillo = pixeles
-                                    angulo_actual = calcular_angulo(cadera, rodilla, tobillo)
-                                    
-                                    if angulo_actual is not None:
-                                        angulos.append(angulo_actual)
-                                        tiempos.append(tiempo)
-                                        
-                                        # Dibujar líneas amarillas y puntos
-                                        cv2.line(fotograma, tuple(cadera), tuple(rodilla), (0, 255, 255), 4)
-                                        cv2.line(fotograma, tuple(rodilla), tuple(tobillo), (0, 255, 255), 4)
-                                        for punto, color in zip(
-                                            pixeles, [(0, 255, 0), (0, 0, 255), (255, 0, 0)]
-                                        ):
-                                            cv2.circle(fotograma, tuple(punto), 8, color, -1)
-                                            
-                                        x = max(5, min(int(rodilla[0]) + 15, ancho - 120))
-                                        y = max(25, min(int(rodilla[1]) - 15, alto - 10))
-                                        cv2.putText(
-                                            fotograma, f"{angulo_actual:.1f} deg", (x, y),
-                                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 3,
-                                            cv2.LINE_AA,
-                                        )
-                                        cv2.putText(
-                                            fotograma, f"{angulo_actual:.1f} deg", (x, y),
-                                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2,
-                                            cv2.LINE_AA,
-                                        )
-                            
-                            escritor.write(fotograma)
-                            
-                    entrada.release()
-                    escritor.release()
-
-                    if numero_fotograma == 0:
-                        st.error("El video no contiene fotogramas.")
+                    fps = cap.get(cv2.CAP_PROP_FPS)
+                    if not np.isfinite(fps) or fps <= 0:
+                        fps = 30.0
+                    ancho = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                    alto = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    if ancho <= 0 or alto <= 0:
+                        st.error("No se pudo obtener la resolución del video.")
+                        cap.release()
                     else:
-                        st.subheader("Video con análisis de movimiento")
-                        
-                        # TRUCO HTML5 BASE64: Inyecta el video directo como código binario al navegador
-                        with open(ruta_procesada, "rb") as f_proc:
-                            video_bytes = f_proc.read()
-                        
-                        base64_video = base64.b64encode(video_bytes).decode("utf-8")
-                        st.markdown(
-                            f'<video width="100%" controls autoplay loop><source src="data:video/mp4;base64,{base64_video}" type="video/mp4"></video>',
-                            unsafe_allow_html=True,
-                        )
-                        
-                        st.download_button("Descargar video analizado", video_bytes, "sentadilla_analizada.mp4", "video/mp4")
-                        
-                        if angulos:
-                            indice_min = int(np.argmin(angulos))
-                            minimo = angulos[indice_min]
-                            rom = max(angulos) - minimo
-                            
-                            st.success("¡Análisis completado con éxito!")
-                            st.subheader("Resultados del análisis")
-                            c1, c2, c3 = st.columns(3)
-                            c1.metric("Máxima flexión de rodilla", f"{minimo:.1f}°")
-                            c2.metric("ROM de rodilla", f"{rom:.1f}°")
-                            c3.metric("Tiempo hasta máxima flexión", f"{tiempos[indice_min]:.2f} s")
-                            
-                            tabla = pd.DataFrame({
-                                "Tiempo (s)": tiempos,
-                                "Ángulo de rodilla (°)": angulos,
-                            })
-                            st.subheader("Variación del ángulo de rodilla durante la ejecución")
-                            st.line_chart(tabla.set_index("Tiempo (s)"))
-                            
-                            st.subheader("Datos del análisis por segundo")
-                            paso = max(1, len(tabla) // 20)
-                            st.dataframe(
-                                tabla.iloc[::paso].round(2),
-                                hide_index=True, use_container_width=True,
-                            )
+                        writer = cv2.VideoWriter(ruta_procesada,
+                                                 cv2.VideoWriter_fourcc(*"mp4v"), fps, (ancho, alto))
+                        if not writer.isOpened():
+                            st.error("No se pudo crear el archivo de video procesado.")
+                            cap.release()
                         else:
-                            st.warning("No se pudieron calcular los ángulos. Asegúrate de grabar de perfil.")
+                            mp_pose = mp.solutions.pose
+                            if lado == "Derecha":
+                                ids = (mp_pose.PoseLandmark.RIGHT_HIP.value,
+                                       mp_pose.PoseLandmark.RIGHT_KNEE.value,
+                                       mp_pose.PoseLandmark.RIGHT_ANKLE.value)
+                            else:
+                                ids = (mp_pose.PoseLandmark.LEFT_HIP.value,
+                                       mp_pose.PoseLandmark.LEFT_KNEE.value,
+                                       mp_pose.PoseLandmark.LEFT_ANKLE.value)
+                            angulos, tiempos = [], []
+                            n = 0
+                            with mp_pose.Pose(static_image_mode=False, model_complexity=1,
+                                              min_detection_confidence=0.5,
+                                              min_tracking_confidence=0.5) as pose:
+                                while True:
+                                    ok, frame = cap.read()
+                                    if not ok:
+                                        break
+                                    tiempo = n / fps
+                                    n += 1
+                                    resultado = pose.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                                    if resultado.pose_landmarks:
+                                        seleccion = [resultado.pose_landmarks.landmark[i] for i in ids]
+                                        if all(p.visibility >= 0.5 for p in seleccion):
+                                            puntos = [np.array([p.x * ancho, p.y * alto], dtype=float)
+                                                      for p in seleccion]
+                                            angulo = calcular_angulo(*puntos)
+                                            if angulo is not None:
+                                                angulos.append(angulo)
+                                                tiempos.append(tiempo)
+                                                p1, p2, p3 = [tuple(np.rint(p).astype(int)) for p in puntos]
+                                                cv2.line(frame, p1, p2, (0, 255, 255), 4)
+                                                cv2.line(frame, p2, p3, (0, 255, 255), 4)
+                                                for p, color in zip((p1, p2, p3),
+                                                                    ((0, 255, 0), (0, 0, 255), (255, 0, 0))):
+                                                    cv2.circle(frame, p, 8, color, -1)
+                                                x = max(5, min(p2[0] + 15, max(5, ancho - 150)))
+                                                y = max(30, min(p2[1] - 15, alto - 10))
+                                                cv2.putText(frame, f"{angulo:.1f} deg", (x, y),
+                                                            cv2.FONT_HERSHEY_SIMPLEX, 0.75,
+                                                            (0, 0, 0), 4, cv2.LINE_AA)
+                                                cv2.putText(frame, f"{angulo:.1f} deg", (x, y),
+                                                            cv2.FONT_HERSHEY_SIMPLEX, 0.75,
+                                                            (0, 255, 255), 2, cv2.LINE_AA)
+                                    writer.write(frame)
+                            cap.release()
+                            writer.release()
+                            if n == 0:
+                                st.error("No se pudieron leer fotogramas del video.")
+                            else:
+                                procesado_ok, procesado_error = convertir_h264(
+                                    ruta_procesada, ruta_web_procesada)
+                                if procesado_ok:
+                                    with open(ruta_web_procesada, "rb") as f:
+                                        procesado_bytes = f.read()
+                                    st.subheader("Video con análisis de movimiento")
+                                    st.video(procesado_bytes, format="video/mp4")
+                                    st.download_button("Descargar video analizado", procesado_bytes,
+                                                       file_name="sentadilla_analizada_h264.mp4",
+                                                       mime="video/mp4")
+                                else:
+                                    st.error("Falló la conversión del video analizado a H.264.")
+                                    st.code(procesado_error or "Error desconocido")
+
+                                if angulos:
+                                    i_min = int(np.argmin(angulos))
+                                    minimo = angulos[i_min]
+                                    rom = max(angulos) - minimo
+                                    st.success("¡Análisis completado!")
+                                    st.subheader("Resultados del análisis")
+                                    c1, c2, c3 = st.columns(3)
+                                    c1.metric("Ángulo mínimo", f"{minimo:.1f}°")
+                                    c2.metric("ROM observado", f"{rom:.1f}°")
+                                    c3.metric("Mayor flexión en", f"{tiempos[i_min]:.2f} s")
+                                    tabla = pd.DataFrame({"Tiempo (s)": tiempos,
+                                                          "Ángulo de rodilla (°)": angulos})
+                                    st.subheader("Ángulo de rodilla a lo largo del tiempo")
+                                    st.line_chart(tabla.set_index("Tiempo (s)"))
+                                    st.subheader("Datos del análisis")
+                                    st.dataframe(tabla.iloc[::max(1, len(tabla) // 20)].round(2),
+                                                 hide_index=True, use_container_width=True)
+                                    st.caption("Medición bidimensional aproximada basada en landmarks de MediaPipe; "
+                                               "no equivale a una medición clínica validada.")
+                                else:
+                                    st.warning("No se detectaron suficientes puntos para calcular el ángulo.")
