@@ -25,7 +25,6 @@ archivo = st.file_uploader("Selecciona el video de la sentadilla", type=["mp4", 
 if archivo is not None:
     lado = st.selectbox("Pierna que se analizará", ["Derecha", "Izquierda"])
     
-    # Guardar video original de forma segura
     tfile_orig = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
     tfile_orig.write(archivo.read())
     ruta_original = tfile_orig.name
@@ -39,7 +38,7 @@ if archivo is not None:
     st.download_button("Descargar video original", video_orig_bytes, "video_original.mp4", "video/mp4")
 
     if st.button("Analizar gesto", type="primary"):
-        with st.spinner("Procesando video y generando visualización... ⏳"):
+        with st.spinner("Procesando video y generando visualización web... ⏳"):
             entrada = cv2.VideoCapture(ruta_original)
             if not entrada.isOpened():
                 st.error("OpenCV no pudo abrir el video.")
@@ -51,7 +50,6 @@ if archivo is not None:
                 ancho = int(entrada.get(cv2.CAP_PROP_FRAME_WIDTH))
                 alto = int(entrada.get(cv2.CAP_PROP_FRAME_HEIGHT))
                 
-                # Archivo temporal crudo para OpenCV
                 tfile_raw = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
                 ruta_raw = tfile_raw.name
                 tfile_raw.close()
@@ -111,7 +109,6 @@ if archivo is not None:
                                         angulos.append(angulo_actual)
                                         tiempos.append(tiempo)
                                         
-                                        # Dibujar esqueleto y ángulos
                                         cv2.line(fotograma, tuple(cadera), tuple(rodilla), (0, 255, 255), 4)
                                         cv2.line(fotograma, tuple(rodilla), tuple(tobillo), (0, 255, 255), 4)
                                         for punto, color in zip(
@@ -137,7 +134,7 @@ if archivo is not None:
                     entrada.release()
                     escritor.release()
 
-                    # Convertir el video al estándar H.264 compatible con navegadores web usando FFmpeg
+                    # Convertir con FFmpeg a H.264
                     tfile_proc = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
                     ruta_procesada = tfile_proc.name
                     tfile_proc.close()
@@ -150,8 +147,10 @@ if archivo is not None:
                             '-crf', '23',
                             ruta_procesada
                         ], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                    except Exception:
-                        ruta_procesada = ruta_raw # Respaldo por si acaso
+                        st.toast("¡Conversión con FFmpeg exitosa!", icon="🚀")
+                    except Exception as e:
+                        ruta_procesada = ruta_raw
+                        st.warning(f"Aviso de conversión: No se pudo usar FFmpeg ({e}). Usando formato estándar.")
 
                     if numero_fotograma == 0:
                         st.error("El video no contiene fotogramas.")
