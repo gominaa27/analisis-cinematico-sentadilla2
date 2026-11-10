@@ -52,8 +52,15 @@ if archivo is not None:
         st.subheader("Video original")
         ok_original, error_original = convertir_a_web(ruta_original, ruta_web)
         if ok_original:
+            st.video(ruta_web, format="video/mp4")
             with open(ruta_web, "rb") as f:
-                st.video(f.read(), format="video/mp4")
+                st.download_button("Descargar video original", f.read(), "video_original.mp4", "video/mp4")
+            vista = cv2.VideoCapture(ruta_web)
+            exito, primer_frame = vista.read()
+            vista.release()
+            if exito:
+                st.caption("Fotograma de comprobación del video original")
+                st.image(cv2.cvtColor(primer_frame, cv2.COLOR_BGR2RGB))
         else:
             st.warning("No se pudo convertir el video original para reproducirlo.")
             st.code(error_original)
@@ -151,8 +158,15 @@ if archivo is not None:
                                     ruta_procesada, ruta_procesada_web
                                 )
                                 if ok_procesado:
+                                    st.video(ruta_procesada_web, format="video/mp4")
                                     with open(ruta_procesada_web, "rb") as f:
-                                        st.video(f.read(), format="video/mp4")
+                                        st.download_button("Descargar video analizado", f.read(), "sentadilla_analizada.mp4", "video/mp4")
+                                    vista = cv2.VideoCapture(ruta_procesada_web)
+                                    exito, primer_frame = vista.read()
+                                    vista.release()
+                                    if exito:
+                                        st.caption("Fotograma de comprobación del análisis")
+                                        st.image(cv2.cvtColor(primer_frame, cv2.COLOR_BGR2RGB))
                                 else:
                                     st.error("No fue posible convertir el video analizado para el navegador.")
                                     st.code(error_procesado)
